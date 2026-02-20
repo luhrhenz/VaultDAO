@@ -48,7 +48,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                     </button>
                 </div>
 
-                {/* 2. Scrollable Body (The 'custom-scrollbar' magic happens here) */}
+                {/* 2. Scrollable Body (Custom Scrollbar applied) */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-8 custom-scrollbar">
                     
                     {/* Visual Timeline Section */}
