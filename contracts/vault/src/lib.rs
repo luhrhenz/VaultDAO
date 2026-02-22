@@ -16,7 +16,11 @@ pub use types::InitConfig;
 
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
-use types::{Config, Priority, Proposal, ProposalStatus, Role};
+#[allow(unused_imports)]
+use types::{
+    AmountTier, Config, Priority, Proposal, ProposalStatus, Role, ThresholdStrategy,
+    TimeBasedThreshold,
+};
 
 /// The main contract structure for VaultDAO.
 ///
@@ -27,6 +31,38 @@ pub struct VaultDAO;
 
 /// Proposal expiration: ~7 days in ledgers (5 seconds per ledger)
 const PROPOSAL_EXPIRY_LEDGERS: u64 = 120_960;
+
+/// Calculate required threshold based on strategy
+fn calculate_required_threshold(env: &Env, config: &Config, proposal: &Proposal) -> u32 {
+    match &config.threshold_strategy {
+        ThresholdStrategy::Fixed => config.threshold,
+        ThresholdStrategy::Percentage(pct) => {
+            let signers_count = config.signers.len();
+            let required = (signers_count * pct).div_ceil(100);
+            required.max(1).min(signers_count)
+        }
+        ThresholdStrategy::AmountBased(tiers) => {
+            let mut required = config.threshold;
+            for tier in tiers.iter() {
+                if proposal.amount >= tier.amount {
+                    required = tier.approvals;
+                } else {
+                    break;
+                }
+            }
+            required.min(config.signers.len())
+        }
+        ThresholdStrategy::TimeBased(time_config) => {
+            let current_ledger = env.ledger().sequence() as u64;
+            let elapsed = current_ledger.saturating_sub(proposal.created_at);
+            if elapsed >= time_config.reduction_delay {
+                time_config.reduced_threshold
+            } else {
+                time_config.initial_threshold
+            }
+        }
+    }
+}
 
 #[contractimpl]
 impl VaultDAO {
@@ -74,6 +110,7 @@ impl VaultDAO {
             weekly_limit: config.weekly_limit,
             timelock_threshold: config.timelock_threshold,
             timelock_delay: config.timelock_delay,
+            threshold_strategy: config.threshold_strategy,
         };
 
         // Store state
@@ -240,9 +277,11 @@ impl VaultDAO {
         // Add approval
         proposal.approvals.push_back(signer.clone());
 
-        // Check if threshold met
+        // Check if threshold met using dynamic strategy
         let approval_count = proposal.approvals.len();
-        if approval_count >= config.threshold {
+        let required_threshold = calculate_required_threshold(&env, &config, &proposal);
+
+        if approval_count >= required_threshold {
             proposal.status = ProposalStatus::Approved;
 
             // Check for Timelock
