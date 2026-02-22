@@ -412,5 +412,20 @@ export const useVaultContract = () => {
         }
     };
 
-    return { proposeTransfer, rejectProposal, executeProposal, getDashboardStats, getVaultEvents, getAllRoles, setRole, getUserRole, getVaultBalance, loading };
+    const getProposalSignatures = async (_proposalId: number) => {
+        // Mock implementation
+        return [];
+    };
+
+    const remindSigner = async (address: string) => {
+        // Mock implementation
+        console.log('Remind signer:', address);
+    };
+
+    const exportSignatures = (signers: unknown[]) => {
+        // Mock implementation
+        console.log('Export signatures:', signers);
+    };
+
+    return { proposeTransfer, rejectProposal, executeProposal, getDashboardStats, getVaultEvents, getAllRoles, setRole, getUserRole, getVaultBalance, getProposalSignatures, remindSigner, exportSignatures, loading };
 };
