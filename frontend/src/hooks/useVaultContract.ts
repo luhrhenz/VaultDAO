@@ -18,6 +18,38 @@ const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 const RPC_URL = "https://soroban-testnet.stellar.org";
 const EVENTS_PAGE_SIZE = 20;
 
+// Recurring Payment Types
+export interface RecurringPayment {
+    id: string;
+    recipient: string;
+    token: string;
+    amount: string;
+    memo: string;
+    interval: number; // in seconds
+    nextPaymentTime: number; // timestamp
+    totalPayments: number;
+    status: 'active' | 'paused' | 'cancelled';
+    createdAt: number;
+    creator: string;
+}
+
+export interface RecurringPaymentHistory {
+    id: string;
+    paymentId: string;
+    executedAt: number;
+    transactionHash: string;
+    amount: string;
+    success: boolean;
+}
+
+export interface CreateRecurringPaymentParams {
+    recipient: string;
+    token: string;
+    amount: string;
+    memo: string;
+    interval: number; // in seconds
+}
+
 const server = new SorobanRpc.Server(RPC_URL);
 
 interface StellarBalance {
