@@ -111,3 +111,25 @@ pub fn emit_comment_edited(env: &Env, comment_id: u64, author: &Address) {
         author.clone(),
     );
 }
+
+/// Emit enhanced config update with before/after values
+pub fn emit_config_changed(
+    env: &Env,
+    updater: &Address,
+    field: Symbol,
+    old_value: i128,
+    new_value: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "config_changed"),),
+        (updater.clone(), field, old_value, new_value),
+    );
+}
+
+/// Emit enhanced threshold update
+pub fn emit_threshold_changed(env: &Env, admin: &Address, old_threshold: u32, new_threshold: u32) {
+    env.events().publish(
+        (Symbol::new(env, "threshold_changed"),),
+        (admin.clone(), old_threshold, new_threshold),
+    );
+}
