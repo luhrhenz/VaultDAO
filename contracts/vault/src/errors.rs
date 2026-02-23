@@ -101,4 +101,20 @@ pub enum VaultError {
     // Reputation errors (12xx)
     /// Caller's reputation score is too low to perform this action
     ReputationTooLow = 1200,
+
+    // Bridge errors (13xx)
+    /// Bridge not configured
+    BridgeNotConfigured = 1300,
+    /// Chain not supported
+    ChainNotSupported = 1301,
+    /// Bridge address not found
+    BridgeAddressNotFound = 1302,
+    /// Amount exceeds bridge limit
+    ExceedsBridgeLimit = 1303,
+    /// Invalid bridge transaction hash
+    InvalidBridgeTxHash = 1304,
+    /// Insufficient confirmations
+    InsufficientConfirmations = 1305,
+    /// Bridge transaction already verified
+    AlreadyVerified = 1306,
 }

@@ -56,6 +56,16 @@ pub enum DataKey {
     InsuranceConfig,
     /// Per-user notification preferences -> NotificationPreferences
     NotificationPrefs(Address),
+    /// Cross-chain proposal by ID -> CrossChainProposal
+    CrossChainProposal(u64),
+    /// Next cross-chain proposal ID counter -> u64
+    NextCrossChainId,
+    /// Cross-chain asset tracking by ID -> CrossChainAsset
+    CrossChainAsset(u64),
+    /// Next cross-chain asset ID counter -> u64
+    NextAssetId,
+    /// Bridge configuration -> BridgeConfig
+    BridgeConfig,
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -527,4 +537,81 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// Cross-Chain Bridge Operations
+// ============================================================================
+
+pub fn get_next_crosschain_id(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::NextCrossChainId)
+        .unwrap_or(1)
+}
+
+pub fn increment_crosschain_id(env: &Env) -> u64 {
+    let next_id = get_next_crosschain_id(env);
+    env.storage()
+        .persistent()
+        .set(&DataKey::NextCrossChainId, &(next_id + 1));
+    next_id
+}
+
+pub fn set_crosschain_proposal(env: &Env, proposal: &crate::types::CrossChainProposal) {
+    let key = DataKey::CrossChainProposal(proposal.id);
+    env.storage().persistent().set(&key, proposal);
+}
+
+pub fn get_crosschain_proposal(
+    env: &Env,
+    id: u64,
+) -> Result<crate::types::CrossChainProposal, VaultError> {
+    let key = DataKey::CrossChainProposal(id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn get_next_asset_id(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::NextAssetId)
+        .unwrap_or(1)
+}
+
+pub fn increment_asset_id(env: &Env) -> u64 {
+    let next_id = get_next_asset_id(env);
+    env.storage()
+        .persistent()
+        .set(&DataKey::NextAssetId, &(next_id + 1));
+    next_id
+}
+
+pub fn set_crosschain_asset(env: &Env, asset: &crate::types::CrossChainAsset) {
+    let key = DataKey::CrossChainAsset(asset.id);
+    env.storage().persistent().set(&key, asset);
+}
+
+pub fn get_crosschain_asset(
+    env: &Env,
+    id: u64,
+) -> Result<crate::types::CrossChainAsset, VaultError> {
+    let key = DataKey::CrossChainAsset(id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .ok_or(VaultError::ProposalNotFound)
+}
+
+pub fn set_bridge_config(env: &Env, config: &crate::types::BridgeConfig) {
+    env.storage().instance().set(&DataKey::BridgeConfig, config);
+}
+
+pub fn get_bridge_config(env: &Env) -> Result<crate::types::BridgeConfig, VaultError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::BridgeConfig)
+        .ok_or(VaultError::BridgeNotConfigured)
 }

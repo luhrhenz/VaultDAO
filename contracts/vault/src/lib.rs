@@ -5,6 +5,7 @@
 
 #![no_std]
 
+mod bridge;
 mod errors;
 mod events;
 mod storage;
@@ -15,9 +16,10 @@ mod types;
 pub use types::InitConfig;
 
 use errors::VaultError;
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
 use types::{
-    AmountTier, Comment, Condition, ConditionLogic, Config, InsuranceConfig, ListMode,
+    AmountTier, BridgeConfig, Comment, Condition, ConditionLogic, Config, CrossChainAsset,
+    CrossChainProposal, CrossChainTransferParams, InsuranceConfig, ListMode,
     NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, Role,
     ThresholdStrategy,
 };
@@ -1546,5 +1548,199 @@ impl VaultDAO {
                 Symbol::new(env, "rejected"),
             );
         }
+    }
+
+    // ========================================================================
+    // Cross-Chain Bridge Operations
+    // ========================================================================
+
+    pub fn configure_bridge(
+        env: Env,
+        admin: Address,
+        bridge_config: BridgeConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+        bridge::validate_bridge_config(&bridge_config)?;
+        storage::set_bridge_config(&env, &bridge_config);
+        Ok(())
+    }
+
+    pub fn propose_crosschain_transfer(
+        env: Env,
+        proposer: Address,
+        params: CrossChainTransferParams,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+        let role = storage::get_role(&env, &proposer);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let config = storage::get_config(&env)?;
+        let bridge_config = storage::get_bridge_config(&env)?;
+
+        if params.amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+        if params.amount > config.spending_limit {
+            return Err(VaultError::ExceedsProposalLimit);
+        }
+        if params.amount > bridge_config.max_bridge_amount {
+            return Err(VaultError::ExceedsBridgeLimit);
+        }
+        if !bridge::is_chain_supported(&bridge_config, &params.target_chain) {
+            return Err(VaultError::ChainNotSupported);
+        }
+
+        let proposal_id = storage::increment_crosschain_id(&env);
+        let current_ledger = env.ledger().sequence() as u64;
+        let unlock_ledger = if params.amount >= config.timelock_threshold {
+            current_ledger + config.timelock_delay
+        } else {
+            0
+        };
+
+        let proposal = CrossChainProposal {
+            id: proposal_id,
+            proposer: proposer.clone(),
+            target_chain: params.target_chain,
+            recipient_hash: params.recipient_hash,
+            token: params.token,
+            amount: params.amount,
+            memo: params.memo,
+            approvals: Vec::new(&env),
+            status: ProposalStatus::Pending,
+            priority: params.priority,
+            created_at: current_ledger,
+            expires_at: current_ledger + 120_960,
+            unlock_ledger,
+            bridge_tx_hash: None,
+        };
+
+        bridge::validate_crosschain_proposal(&bridge_config, &proposal)?;
+        storage::set_crosschain_proposal(&env, &proposal);
+        Ok(proposal_id)
+    }
+
+    pub fn approve_crosschain_proposal(
+        env: Env,
+        signer: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        signer.require_auth();
+        let config = storage::get_config(&env)?;
+        if !config.signers.contains(&signer) {
+            return Err(VaultError::NotASigner);
+        }
+
+        let mut proposal = storage::get_crosschain_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+        if proposal.approvals.contains(&signer) {
+            return Err(VaultError::AlreadyApproved);
+        }
+
+        proposal.approvals.push_back(signer);
+        if proposal.approvals.len() >= config.threshold {
+            proposal.status = ProposalStatus::Approved;
+        }
+
+        storage::set_crosschain_proposal(&env, &proposal);
+        Ok(())
+    }
+
+    pub fn execute_crosschain_proposal(
+        env: Env,
+        executor: Address,
+        proposal_id: u64,
+    ) -> Result<u64, VaultError> {
+        executor.require_auth();
+        let bridge_config = storage::get_bridge_config(&env)?;
+        let mut proposal = storage::get_crosschain_proposal(&env, proposal_id)?;
+
+        if proposal.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        let current_ledger = env.ledger().sequence() as u64;
+        if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        let fee = bridge::calculate_bridge_fee(proposal.amount, bridge_config.fee_bps);
+        let net_amount = proposal.amount - fee;
+
+        token::transfer(&env, &proposal.token, &executor, net_amount);
+
+        let asset_id = storage::increment_asset_id(&env);
+        let bridge_tx_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        let asset = CrossChainAsset {
+            id: asset_id,
+            source_chain: Symbol::new(&env, "Stellar"),
+            target_chain: proposal.target_chain.clone(),
+            token: proposal.token.clone(),
+            amount: net_amount,
+            bridge_tx_hash: bridge_tx_hash.clone(),
+            confirmations: 0,
+            required_confirmations: bridge::get_min_confirmations(
+                &bridge_config,
+                &proposal.target_chain,
+            ),
+            status: 0,
+            timestamp: current_ledger,
+        };
+
+        storage::set_crosschain_asset(&env, &asset);
+        proposal.status = ProposalStatus::Executed;
+        proposal.bridge_tx_hash = Some(bridge_tx_hash);
+        storage::set_crosschain_proposal(&env, &proposal);
+
+        Ok(asset_id)
+    }
+
+    pub fn update_bridge_confirmations(
+        env: Env,
+        admin: Address,
+        asset_id: u64,
+        confirmations: u32,
+        tx_hash: BytesN<32>,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut asset = storage::get_crosschain_asset(&env, asset_id)?;
+        if asset.status == 1 {
+            return Err(VaultError::AlreadyVerified);
+        }
+
+        asset.bridge_tx_hash = tx_hash;
+        bridge::update_confirmations(&mut asset, confirmations);
+        storage::set_crosschain_asset(&env, &asset);
+        Ok(())
+    }
+
+    pub fn get_crosschain_proposal(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<CrossChainProposal, VaultError> {
+        storage::get_crosschain_proposal(&env, proposal_id)
+    }
+
+    pub fn get_crosschain_asset(env: Env, asset_id: u64) -> Result<CrossChainAsset, VaultError> {
+        storage::get_crosschain_asset(&env, asset_id)
+    }
+
+    pub fn calculate_fee(env: Env, amount: i128) -> Result<i128, VaultError> {
+        let bridge_config = storage::get_bridge_config(&env)?;
+        Ok(bridge::calculate_bridge_fee(amount, bridge_config.fee_bps))
     }
 }

@@ -324,3 +324,93 @@ impl NotificationPreferences {
         }
     }
 }
+
+// ============================================================================
+// Cross-Chain Bridge (Issue: feature/cross-chain-bridge)
+// ============================================================================
+
+/// Supported blockchain networks for cross-chain operations
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ChainId {
+    Ethereum = 1,
+    Polygon = 137,
+    #[allow(clippy::upper_case_acronyms)]
+    BSC = 56,
+}
+
+/// Bridge configuration for cross-chain operations
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BridgeConfig {
+    pub enabled_chains: Vec<ChainId>,
+    pub bridge_addresses: Vec<BridgeAddress>,
+    pub min_confirmations: Vec<ChainConfirmations>,
+    pub fee_bps: u32,
+    pub max_bridge_amount: i128,
+}
+
+/// Bridge address mapping
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BridgeAddress {
+    pub chain_id: ChainId,
+    pub address_hash: soroban_sdk::BytesN<32>,
+}
+
+/// Chain confirmation requirements
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ChainConfirmations {
+    pub chain_id: ChainId,
+    pub confirmations: u32,
+}
+
+/// Cross-chain proposal type
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossChainProposal {
+    pub id: u64,
+    pub proposer: Address,
+    pub target_chain: ChainId,
+    pub recipient_hash: soroban_sdk::BytesN<32>,
+    pub token: Address,
+    pub amount: i128,
+    pub memo: Symbol,
+    pub approvals: Vec<Address>,
+    pub status: ProposalStatus,
+    pub priority: Priority,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub unlock_ledger: u64,
+    pub bridge_tx_hash: Option<soroban_sdk::BytesN<32>>,
+}
+
+/// Cross-chain asset tracking
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossChainAsset {
+    pub id: u64,
+    pub source_chain: Symbol,
+    pub target_chain: ChainId,
+    pub token: Address,
+    pub amount: i128,
+    pub bridge_tx_hash: soroban_sdk::BytesN<32>,
+    pub confirmations: u32,
+    pub required_confirmations: u32,
+    pub status: u32,
+    pub timestamp: u64,
+}
+
+/// Parameters for cross-chain transfer proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossChainTransferParams {
+    pub target_chain: ChainId,
+    pub recipient_hash: soroban_sdk::BytesN<32>,
+    pub token: Address,
+    pub amount: i128,
+    pub memo: Symbol,
+    pub priority: Priority,
+}
