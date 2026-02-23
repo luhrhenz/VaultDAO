@@ -598,5 +598,18 @@ export const useVaultContract = () => {
         getAllRoles: async () => [],
         setRole: async (_address: string, _role: number) => { },
         getUserRole: async (_address: string) => 0,
+        // Add missing functions
+        addComment: async (_proposalId: number, _text: string, _parentId: number) => "1",
+        editComment: async (_commentId: string, _text: string) => { },
+        getProposalComments: async (_proposalId: number) => [],
+        getListMode: async () => "Disabled",
+        setListMode: async (_mode: string) => { },
+        addToWhitelist: async (_address: string) => { },
+        removeFromWhitelist: async (_address: string) => { },
+        addToBlacklist: async (_address: string) => { },
+        removeFromBlacklist: async (_address: string) => { },
+        isWhitelisted: async (_address: string) => false,
+        isBlacklisted: async (_address: string) => false,
+        assignRole: async (_address: string, _role: number) => { },
     };
 };

@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck, MessageSquare } from 'lucide-react';
 import ProposalComments from '../ProposalComments';
-import { X, Copy, CheckCircle2, Clock, PlayCircle, Ban, UserCheck } from 'lucide-react';
 import SignatureStatus, { type Signer } from '../SignatureStatus';
 import SignatureFlow, { type FlowStep } from '../SignatureFlow';
 import QRSignature from '../QRSignature';
