@@ -10,6 +10,8 @@ import ProposalFilters, { type FilterState } from '../../components/proposals/Pr
 import { useToast } from '../../hooks/useToast';
 import { useVaultContract } from '../../hooks/useVaultContract';
 import { useWallet } from '../../context/WalletContextProps';
+import { reportError } from '../../components/ErrorReporting';
+import { parseError } from '../../utils/errorParser';
 import type { TokenInfo } from '../../constants/tokens';
 import { DEFAULT_TOKENS } from '../../constants/tokens';
 
