@@ -769,6 +769,7 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 // ============================================================================
 
 /// Get packed spending limits (combines daily and weekly in single read)
+#[allow(dead_code)]
 pub fn get_packed_spending(env: &Env) -> crate::types::PackedSpendingLimits {
     let today = get_day_number(env);
     let week = get_week_number(env);
@@ -785,6 +786,7 @@ pub fn get_packed_spending(env: &Env) -> crate::types::PackedSpendingLimits {
 }
 
 /// Set packed spending limits (combines daily and weekly in single write)
+#[allow(dead_code)]
 pub fn set_packed_spending(env: &Env, limits: &crate::types::PackedSpendingLimits) {
     let key = DataKey::PackedSpending;
     env.storage().temporary().set(&key, limits);
@@ -794,6 +796,7 @@ pub fn set_packed_spending(env: &Env, limits: &crate::types::PackedSpendingLimit
 }
 
 /// Optimized: Add to both daily and weekly spending in single operation
+#[allow(dead_code)]
 pub fn add_spending_packed(env: &Env, amount: i128) {
     let today = get_day_number(env);
     let week = get_week_number(env);
@@ -817,6 +820,7 @@ pub fn add_spending_packed(env: &Env, amount: i128) {
 }
 
 /// Optimized: Check spending limits in single operation
+#[allow(dead_code)]
 pub fn check_spending_limits_packed(
     env: &Env,
     amount: i128,
@@ -837,6 +841,7 @@ pub fn check_spending_limits_packed(
 }
 
 /// Optimized: Refund spending limits in single operation
+#[allow(dead_code)]
 pub fn refund_spending_limits_packed(env: &Env, amount: i128) {
     let mut limits = get_packed_spending(env);
     limits.daily_spent = limits.daily_spent.saturating_sub(amount).max(0);
@@ -845,6 +850,7 @@ pub fn refund_spending_limits_packed(env: &Env, amount: i128) {
 }
 
 /// Batch get proposals - optimized to reduce storage reads
+#[allow(dead_code)]
 pub fn batch_get_proposals(
     env: &Env,
     ids: &Vec<u64>,
@@ -861,6 +867,7 @@ pub fn batch_get_proposals(
 }
 
 /// Batch set proposals - optimized to reduce storage operations
+#[allow(dead_code)]
 pub fn batch_set_proposals(env: &Env, proposals: &Vec<Proposal>) {
     for i in 0..proposals.len() {
         if let Some(proposal) = proposals.get(i) {
@@ -870,12 +877,14 @@ pub fn batch_set_proposals(env: &Env, proposals: &Vec<Proposal>) {
 }
 
 /// Cache frequently accessed config in instance storage for faster reads
+#[allow(dead_code)]
 pub fn get_config_cached(env: &Env) -> Result<Config, crate::errors::VaultError> {
     // Config is already in instance storage, which is faster than persistent
     get_config(env)
 }
 
 /// Optimized velocity check using temporary storage with auto-expiry
+#[allow(dead_code)]
 pub fn check_velocity_optimized(env: &Env, addr: &Address, limit: u32, window: u64) -> bool {
     let now = env.ledger().timestamp();
     let key = DataKey::VelocityHistory(addr.clone());

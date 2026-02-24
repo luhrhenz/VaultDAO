@@ -3085,7 +3085,7 @@ fn test_retry_succeeds_after_balance_funded() {
 fn test_gas_benchmark_propose_transfer() {
     let env = Env::default();
     env.mock_all_auths();
-    env.budget().reset_unlimited();
+    env.cost_estimate().budget().reset_unlimited();
 
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
@@ -3104,7 +3104,7 @@ fn test_gas_benchmark_propose_transfer() {
     client.set_role(&admin, &signer, &Role::Treasurer);
 
     // Measure gas for proposal creation
-    env.budget().reset_default();
+    env.cost_estimate().budget().reset_default();
     let _proposal_id = client.propose_transfer(
         &signer,
         &recipient,
@@ -3118,12 +3118,12 @@ fn test_gas_benchmark_propose_transfer() {
     );
 
     // Print gas usage
-    env.budget().print();
+    env.cost_estimate().budget().print();
 
     // Assert reasonable gas usage (baseline for comparison)
     // This will help track regressions
-    let cpu_insns = env.budget().cpu_instruction_cost();
-    let mem_bytes = env.budget().memory_bytes_cost();
+    let cpu_insns = env.cost_estimate().budget().cpu_instruction_cost();
+    let mem_bytes = env.cost_estimate().budget().memory_bytes_cost();
 
     // Baseline assertions (adjust based on actual measurements)
     assert!(
@@ -3173,13 +3173,13 @@ fn test_gas_benchmark_approve_proposal() {
     );
 
     // Measure gas for approval
-    env.budget().reset_default();
+    env.cost_estimate().budget().reset_default();
     client.approve_proposal(&signer2, &proposal_id);
 
-    env.budget().print();
+    env.cost_estimate().budget().print();
 
-    let cpu_insns = env.budget().cpu_instruction_cost();
-    let mem_bytes = env.budget().memory_bytes_cost();
+    let cpu_insns = env.cost_estimate().budget().cpu_instruction_cost();
+    let mem_bytes = env.cost_estimate().budget().memory_bytes_cost();
 
     assert!(
         cpu_insns < 10_000_000,
@@ -3235,13 +3235,13 @@ fn test_gas_benchmark_batch_execute() {
     }
 
     // Measure gas for batch execution
-    env.budget().reset_default();
+    env.cost_estimate().budget().reset_default();
     let executed = client.batch_execute_proposals(&signer, &proposal_ids);
 
-    env.budget().print();
+    env.cost_estimate().budget().print();
 
-    let cpu_insns = env.budget().cpu_instruction_cost();
-    let mem_bytes = env.budget().memory_bytes_cost();
+    let cpu_insns = env.cost_estimate().budget().cpu_instruction_cost();
+    let mem_bytes = env.cost_estimate().budget().memory_bytes_cost();
 
     assert_eq!(executed.len(), 5);
     // Batch should be more efficient than 5x individual executions
@@ -3277,7 +3277,7 @@ fn test_gas_benchmark_packed_spending() {
     client.set_role(&admin, &signer, &Role::Treasurer);
 
     // Measure gas for multiple proposals (tests packed spending optimization)
-    env.budget().reset_default();
+    env.cost_estimate().budget().reset_default();
 
     for i in 0..10 {
         let _proposal_id = client.propose_transfer(
@@ -3293,10 +3293,10 @@ fn test_gas_benchmark_packed_spending() {
         );
     }
 
-    env.budget().print();
+    env.cost_estimate().budget().print();
 
-    let cpu_insns = env.budget().cpu_instruction_cost();
-    let mem_bytes = env.budget().memory_bytes_cost();
+    let cpu_insns = env.cost_estimate().budget().cpu_instruction_cost();
+    let _mem_bytes = env.cost_estimate().budget().memory_bytes_cost();
 
     // With packed spending, should be more efficient than separate daily/weekly tracking
     assert!(
@@ -3325,7 +3325,7 @@ fn test_gas_comparison_storage_operations() {
 
     // Test demonstrates gas savings from packed storage
     // Measure unpacked (separate daily/weekly operations) via contract calls
-    env.budget().reset_default();
+    env.cost_estimate().budget().reset_default();
 
     // Use contract context for storage operations
     env.as_contract(&contract_id, || {
@@ -3334,17 +3334,17 @@ fn test_gas_comparison_storage_operations() {
         storage::add_weekly_spent(&env, 1, 100);
     });
 
-    let unpacked_cpu = env.budget().cpu_instruction_cost();
+    let unpacked_cpu = env.cost_estimate().budget().cpu_instruction_cost();
 
     // Measure packed (combined operation)
-    env.budget().reset_default();
+    env.cost_estimate().budget().reset_default();
 
     env.as_contract(&contract_id, || {
         use crate::storage;
         storage::add_spending_packed(&env, 100);
     });
 
-    let packed_cpu = env.budget().cpu_instruction_cost();
+    let packed_cpu = env.cost_estimate().budget().cpu_instruction_cost();
 
     // Packed should use less gas (fewer storage operations)
     assert!(
@@ -3397,7 +3397,7 @@ fn test_gas_benchmark_velocity_check() {
     client.set_role(&admin, &signer, &Role::Treasurer);
 
     // Measure gas for proposals with velocity checking
-    env.budget().reset_default();
+    env.cost_estimate().budget().reset_default();
 
     for i in 0..20 {
         let _proposal_id = client.propose_transfer(
@@ -3413,9 +3413,9 @@ fn test_gas_benchmark_velocity_check() {
         );
     }
 
-    env.budget().print();
+    env.cost_estimate().budget().print();
 
-    let cpu_insns = env.budget().cpu_instruction_cost();
+    let cpu_insns = env.cost_estimate().budget().cpu_instruction_cost();
 
     // Optimized velocity check should be efficient
     assert!(
@@ -3439,5 +3439,4 @@ fn test_gas_optimization_summary() {
     // 5. Cached Config: Instance storage for frequently accessed data
     //    Expected savings: 5-10% on config reads
     // Total expected gas reduction: 20%+ across common operations
-    assert!(true, "Gas optimization documentation test");
 }
