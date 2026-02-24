@@ -19,13 +19,10 @@ pub use types::InitConfig;
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
-    NotificationPreferences, Priority, Proposal, ProposalAmendment, ProposalStatus, Reputation,
-    RetryConfig, RetryState, Role, ThresholdStrategy, VaultMetrics,
     Comment, Condition, ConditionLogic, Config, CrossVaultConfig, CrossVaultProposal,
     CrossVaultStatus, Dispute, DisputeResolution, DisputeStatus, GasConfig, InsuranceConfig,
-    ListMode, NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
-    RetryState, Role, ThresholdStrategy, VaultAction, VaultMetrics,
+    ListMode, NotificationPreferences, Priority, Proposal, ProposalAmendment, ProposalStatus,
+    Reputation, RetryConfig, RetryState, Role, ThresholdStrategy, VaultAction, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
