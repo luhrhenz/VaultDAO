@@ -17,7 +17,7 @@
 //!
 //! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
-use soroban_sdk::{contracttype, Address, String, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
 
 /// Initialization configuration - groups all config params to reduce function arguments
 #[contracttype]
@@ -88,6 +88,21 @@ pub struct CancellationRecord {
     pub reason: Symbol,
     pub cancelled_at_ledger: u64,
     pub refunded_amount: i128,
+}
+
+/// Audit record for a proposal amendment
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalAmendment {
+    pub proposal_id: u64,
+    pub amended_by: Address,
+    pub amended_at_ledger: u64,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    pub old_memo: Symbol,
+    pub new_memo: Symbol,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -220,6 +235,10 @@ pub struct Proposal {
     pub amount: i128,
     /// Optional memo/description
     pub memo: Symbol,
+    /// Extensible metadata map for proposal context and integration tags
+    pub metadata: Map<Symbol, String>,
+    /// Optional categorical labels for proposal filtering
+    pub tags: Vec<Symbol>,
     /// Addresses that have approved
     pub approvals: Vec<Address>,
     /// Addresses that explicitly abstained
@@ -250,6 +269,8 @@ pub struct Proposal {
     pub snapshot_ledger: u64,
     /// Voting power snapshot — addresses eligible to vote at creation time
     pub snapshot_signers: Vec<Address>,
+    /// Proposal IDs that must be executed before this proposal can execute
+    pub depends_on: Vec<u64>,
     /// Flag indicating if this is a swap proposal
     pub is_swap: bool,
     /// Ledger sequence when voting must complete (0 = no deadline)
@@ -622,230 +643,217 @@ pub struct RetryState {
 }
 
 // ============================================================================
-// Gas Optimization: Packed Structures
+// Cross-Vault Proposal Coordination (Issue: feature/cross-vault-coordination)
 // ============================================================================
 
-/// Bitfield for proposal flags - packs multiple booleans into single u32
-/// Bit 0: is_swap
-/// Bit 1: has_conditions
-/// Bit 2: has_insurance
-/// Bit 3-31: reserved for future use
+/// Status of a cross-vault proposal
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProposalFlags(pub u32);
-
-impl ProposalFlags {
-    pub const NONE: u32 = 0;
-    pub const IS_SWAP: u32 = 1 << 0;
-    pub const HAS_CONDITIONS: u32 = 1 << 1;
-    pub const HAS_INSURANCE: u32 = 1 << 2;
-
-    pub fn is_swap(&self) -> bool {
-        (self.0 & Self::IS_SWAP) != 0
-    }
-
-    pub fn has_conditions(&self) -> bool {
-        (self.0 & Self::HAS_CONDITIONS) != 0
-    }
-
-    pub fn has_insurance(&self) -> bool {
-        (self.0 & Self::HAS_INSURANCE) != 0
-    }
-
-    pub fn set_is_swap(&mut self, value: bool) {
-        if value {
-            self.0 |= Self::IS_SWAP;
-        } else {
-            self.0 &= !Self::IS_SWAP;
-        }
-    }
-
-    pub fn set_has_conditions(&mut self, value: bool) {
-        if value {
-            self.0 |= Self::HAS_CONDITIONS;
-        } else {
-            self.0 &= !Self::HAS_CONDITIONS;
-        }
-    }
-
-    pub fn set_has_insurance(&mut self, value: bool) {
-        if value {
-            self.0 |= Self::HAS_INSURANCE;
-        } else {
-            self.0 &= !Self::HAS_INSURANCE;
-        }
-    }
+#[repr(u32)]
+pub enum CrossVaultStatus {
+    Pending = 0,
+    Approved = 1,
+    Executed = 2,
+    Failed = 3,
+    Cancelled = 4,
 }
 
-/// Packed proposal core data - optimized for storage efficiency.
-///
-/// This structure separates the frequently-accessed core proposal data from
-/// the larger optional fields (attachments, conditions, snapshot_signers).
-/// By storing these separately, we reduce the cost of reading/writing proposals
-/// when the optional data isn't needed.
+/// Describes a single action to be executed on a participant vault
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct PackedProposalCore {
-    /// Unique proposal ID (u32 sufficient for ~4B proposals)
-    pub id: u64,
-    /// Address that created the proposal
-    pub proposer: Address,
-    /// Recipient of the transfer
+pub struct VaultAction {
+    /// Address of the participant vault contract
+    pub vault_address: Address,
+    /// Recipient of the transfer from the participant vault
     pub recipient: Address,
-    /// Token contract address (SAC or custom)
+    /// Token contract address
     pub token: Address,
-    /// Amount to transfer (in token's smallest unit)
+    /// Amount to transfer
     pub amount: i128,
-    /// Packed flags (is_swap, has_conditions, has_insurance)
-    pub flags: ProposalFlags,
-    /// Current status (packed as u8)
-    pub status: ProposalStatus,
-    /// Proposal urgency level (packed as u8)
-    pub priority: Priority,
-    /// Logic operator for combining conditions (packed as u8)
-    pub condition_logic: ConditionLogic,
-    /// Ledger sequence when created (u32 sufficient for ~136 years of ledgers)
-    pub created_at: u32,
-    /// Ledger sequence when proposal expires
-    pub expires_at: u32,
-    /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
-    pub unlock_ledger: u32,
-    /// Insurance amount staked by proposer (0 = no insurance)
-    pub insurance_amount: i128,
-    /// Ledger sequence when voting must complete (0 = no deadline)
-    pub voting_deadline: u32,
-    /// Number of approvals (stored separately from approval addresses)
-    pub approval_count: u32,
-    /// Number of abstentions
-    pub abstention_count: u32,
+    /// Optional memo
+    pub memo: Symbol,
 }
 
-/// Packed spending limits - combines daily/weekly tracking into single storage entry
+/// Cross-vault proposal stored alongside the base Proposal
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct PackedSpendingLimits {
-    /// Day number for daily limit tracking
-    pub day_number: u32,
-    /// Amount spent today
-    pub daily_spent: i128,
-    /// Week number for weekly limit tracking
-    pub week_number: u32,
-    /// Amount spent this week
-    pub weekly_spent: i128,
+pub struct CrossVaultProposal {
+    /// List of actions to execute across participant vaults
+    pub actions: Vec<VaultAction>,
+    /// Current status of the cross-vault proposal
+    pub status: CrossVaultStatus,
+    /// Per-action execution results (true = success)
+    pub execution_results: Vec<bool>,
+    /// Ledger when executed (0 if not yet executed)
+    pub executed_at: u64,
 }
 
-/// Packed config for gas-efficient storage
+/// Configuration for cross-vault participation
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct PackedConfigCore {
-    /// Required number of approvals (M in M-of-N)
-    pub threshold: u32,
-    /// Minimum number of votes required (0 = disabled)
-    pub quorum: u32,
-    /// Maximum amount per proposal (in stroops)
-    pub spending_limit: i128,
-    /// Maximum aggregate daily spending (in stroops)
-    pub daily_limit: i128,
-    /// Maximum aggregate weekly spending (in stroops)
-    pub weekly_limit: i128,
-    /// Amount threshold above which a timelock applies
-    pub timelock_threshold: i128,
-    /// Delay in ledgers for timelocked proposals (u32 sufficient)
-    pub timelock_delay: u32,
-    /// Default voting deadline in ledgers (0 = no deadline)
-    pub default_voting_deadline: u32,
+pub struct CrossVaultConfig {
+    /// Whether this vault participates in cross-vault operations
+    pub enabled: bool,
+    /// Vault addresses authorized to coordinate actions on this vault
+    pub authorized_coordinators: Vec<Address>,
+    /// Maximum amount per single cross-vault action
+    pub max_action_amount: i128,
+    /// Maximum number of actions in a single cross-vault proposal
+    pub max_actions: u32,
 }
 
-/// Packed metrics for gas-efficient updates
+// ============================================================================
+// Dispute Resolution (Issue: feature/dispute-resolution)
+// ============================================================================
+
+/// Lifecycle status of a dispute
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DisputeStatus {
+    /// Dispute has been filed, awaiting arbitrator review
+    Filed = 0,
+    /// Arbitrator is actively reviewing the dispute
+    UnderReview = 1,
+    /// Dispute has been resolved by an arbitrator
+    Resolved = 2,
+    /// Dispute was dismissed by an arbitrator
+    Dismissed = 3,
+}
+
+/// Outcome of a dispute resolution
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DisputeResolution {
+    /// Ruling in favor of the original proposer (proposal proceeds)
+    InFavorOfProposer = 0,
+    /// Ruling in favor of the disputer (proposal rejected)
+    InFavorOfDisputer = 1,
+    /// Compromise reached (proposal modified or partially executed)
+    Compromise = 2,
+    /// Dispute dismissed as invalid
+    Dismissed = 3,
+}
+
+/// On-chain dispute record for a contested proposal
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct PackedMetrics {
-    /// Total number of proposals ever created
-    pub total_proposals: u32,
-    /// Number of proposals successfully executed
-    pub executed_count: u32,
-    /// Number of proposals rejected
-    pub rejected_count: u32,
-    /// Number of proposals that expired without execution
-    pub expired_count: u32,
-    /// Cumulative ledgers elapsed from proposal creation to execution
-    pub total_execution_time_ledgers: u64,
-    /// Total gas units consumed across all executions
-    pub total_gas_used: u64,
-    /// Ledger when metrics were last updated
-    pub last_updated_ledger: u32,
+pub struct Dispute {
+    /// Unique dispute ID
+    pub id: u64,
+    /// ID of the disputed proposal
+    pub proposal_id: u64,
+    /// Address that filed the dispute
+    pub disputer: Address,
+    /// Short reason for the dispute
+    pub reason: Symbol,
+    /// IPFS hashes or on-chain references to supporting evidence
+    pub evidence: Vec<String>,
+    /// Current status
+    pub status: DisputeStatus,
+    /// Resolution outcome (only set when status is Resolved or Dismissed)
+    pub resolution: DisputeResolution,
+    /// Arbitrator who resolved the dispute (zero-value until resolved)
+    pub arbitrator: Address,
+    /// Ledger when dispute was filed
+    pub filed_at: u64,
+    /// Ledger when dispute was resolved (0 if unresolved)
+    pub resolved_at: u64,
+}
+// ============================================================================
+// Escrow System (Issue: feature/escrow-system)
+// ============================================================================
+
+/// Status lifecycle of an escrow
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EscrowStatus {
+    /// Escrow created, awaiting funding
+    Pending = 0,
+    /// Funds locked, milestone phase active
+    Active = 1,
+    /// All milestones completed, funds ready for release
+    MilestonesComplete = 2,
+    /// Funds released to recipient
+    Released = 3,
+    /// Refunded to funder (on failure or dispute)
+    Refunded = 4,
+    /// Disputed, awaiting arbitration
+    Disputed = 5,
 }
 
-/// Packed reputation for gas-efficient storage
+/// Milestone tracking unit for progressive fund release
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct PackedReputation {
-    /// Composite score (higher = more trusted) - u32 for Soroban compatibility
-    pub score: u32,
-    /// Total proposals successfully executed
-    pub proposals_executed: u32,
-    /// Total proposals rejected
-    pub proposals_rejected: u32,
-    /// Total proposals created
-    pub proposals_created: u32,
-    /// Total approvals given
-    pub approvals_given: u32,
-    /// Ledger when reputation was last decayed
-    pub last_decay_ledger: u32,
+pub struct Milestone {
+    /// Unique milestone ID
+    pub id: u64,
+    /// Percentage of total escrow amount (0-100)
+    pub percentage: u32,
+    /// Ledger when this milestone can be marked complete
+    pub release_ledger: u64,
+    /// Whether this milestone has been verified as complete
+    pub is_completed: bool,
+    /// Ledger when milestone was completed (0 if not completed)
+    pub completion_ledger: u64,
 }
 
-impl PackedReputation {
-    pub fn default() -> Self {
-        PackedReputation {
-            score: 500,
-            proposals_executed: 0,
-            proposals_rejected: 0,
-            proposals_created: 0,
-            approvals_given: 0,
-            last_decay_ledger: 0,
+/// Escrow agreement holding funds with milestone-based releases
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Escrow {
+    /// Unique escrow ID
+    pub id: u64,
+    /// Address that funded the escrow
+    pub funder: Address,
+    /// Address that receives funds on completion
+    pub recipient: Address,
+    /// Token contract address
+    pub token: Address,
+    /// Total escrow amount (in token's smallest unit)
+    pub total_amount: i128,
+    /// Amount already released
+    pub released_amount: i128,
+    /// Milestones for progressive fund release
+    pub milestones: Vec<Milestone>,
+    /// Current escrow status
+    pub status: EscrowStatus,
+    /// Arbitrator for dispute resolution
+    pub arbitrator: Address,
+    /// Optional dispute details if disputed
+    pub dispute_reason: Symbol,
+    /// Ledger when escrow was created
+    pub created_at: u64,
+    /// Ledger when escrow expires (full refund if not completed)
+    pub expires_at: u64,
+    /// Ledger when escrow was released/refunded (0 if still active)
+    pub finalized_at: u64,
+}
+
+impl Escrow {
+    /// Calculate total percentage from all milestones
+    pub fn total_milestone_percentage(&self) -> u32 {
+        let mut total: u32 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                total = total.saturating_add(m.percentage);
+            }
         }
-    }
-}
-
-/// Packed notification preferences - uses bitfield for boolean flags
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct PackedNotificationPrefs(pub u32);
-
-impl PackedNotificationPrefs {
-    pub const NOTIFY_ON_PROPOSAL: u32 = 1 << 0;
-    pub const NOTIFY_ON_APPROVAL: u32 = 1 << 1;
-    pub const NOTIFY_ON_EXECUTION: u32 = 1 << 2;
-    pub const NOTIFY_ON_REJECTION: u32 = 1 << 3;
-    pub const NOTIFY_ON_EXPIRY: u32 = 1 << 4;
-
-    pub fn default() -> Self {
-        // Default: all except expiry
-        PackedNotificationPrefs(
-            Self::NOTIFY_ON_PROPOSAL
-                | Self::NOTIFY_ON_APPROVAL
-                | Self::NOTIFY_ON_EXECUTION
-                | Self::NOTIFY_ON_REJECTION,
-        )
+        total
     }
 
-    pub fn notify_on_proposal(&self) -> bool {
-        (self.0 & Self::NOTIFY_ON_PROPOSAL) != 0
-    }
-
-    pub fn notify_on_approval(&self) -> bool {
-        (self.0 & Self::NOTIFY_ON_APPROVAL) != 0
-    }
-
-    pub fn notify_on_execution(&self) -> bool {
-        (self.0 & Self::NOTIFY_ON_EXECUTION) != 0
-    }
-
-    pub fn notify_on_rejection(&self) -> bool {
-        (self.0 & Self::NOTIFY_ON_REJECTION) != 0
-    }
-
-    pub fn notify_on_expiry(&self) -> bool {
-        (self.0 & Self::NOTIFY_ON_EXPIRY) != 0
+    /// Calculate amount available for immediate release
+    pub fn amount_to_release(&self) -> i128 {
+        let mut completed_percentage: u32 = 0;
+        for i in 0..self.milestones.len() {
+            if let Some(m) = self.milestones.get(i) {
+                if m.is_completed {
+                    completed_percentage = completed_percentage.saturating_add(m.percentage);
+                }
+            }
+        }
+        (self.total_amount * completed_percentage as i128) / 100 - self.released_amount
     }
 }
