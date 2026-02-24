@@ -2951,6 +2951,64 @@ fn test_set_template_status() {
 /// Test creating proposal from template
 #[test]
 fn test_create_from_template() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = token_id.address();
+    let sac_admin_client = StellarAssetClient::new(&env, &token_id.address());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    sac_admin_client.mint(&contract_id, &100);
+
+    // Create template
+    let template_id = client.create_template(
+        &admin,
+        &Symbol::new(&env, "payroll"),
+        &Symbol::new(&env, "monthly_payroll"),
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "salary"),
+        &0,
+        &0,
+    );
+
+    // Create proposal from template
+    let overrides = TemplateOverrides {
+        override_recipient: false,
+        recipient: Address::generate(&env),
+        override_amount: false,
+        amount: 0,
+        override_memo: false,
+        memo: Symbol::new(&env, ""),
+        override_priority: false,
+        priority: Priority::Normal,
+    };
+    let proposal_id = client.create_from_template(&treasurer, &template_id, &overrides);
+
+    assert_eq!(proposal_id, 1);
+
+    // Verify proposal
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.recipient, recipient);
+    assert_eq!(proposal.amount, 100);
+    assert_eq!(proposal.memo, Symbol::new(&env, "salary"));
+}
+
+// ============================================================================
 // Retry Tests (feature/execution-retry)
 // ============================================================================
 
@@ -3184,7 +3242,6 @@ fn test_retry_not_enabled_passes_through_error() {
         spending_limit: 1000,
         daily_limit: 5000,
         weekly_limit: 10000,
-        timelock_threshold: 500,
         timelock_threshold: 50000,
         timelock_delay: 100,
         velocity_limit: VelocityConfig {
@@ -3193,43 +3250,35 @@ fn test_retry_not_enabled_passes_through_error() {
         },
         threshold_strategy: ThresholdStrategy::Fixed,
         default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
     };
-    client.initialize(&admin, &config);
-    client.set_role(&admin, &treasurer, &Role::Treasurer);
+    client.initialize(&admin, &signer1);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
 
-    // Create template
-    let template_id = client.create_template(
+    sac_admin_client.mint(&contract_id, &500);
+
+    let recipient = Address::generate(&env);
+    let proposal_id = client.propose_transfer(
         &admin,
-        &Symbol::new(&env, "payroll"),
-        &Symbol::new(&env, "monthly_payroll"),
         &recipient,
-        &token,
-        &100,
-        &Symbol::new(&env, "salary"),
-        &50,
-        &200,
+        &token_addr,
+        &500_i128,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0_i128,
     );
 
-    // Create proposal from template
-    let overrides = TemplateOverrides {
-        override_recipient: false,
-        recipient: Address::generate(&env),
-        override_amount: false,
-        amount: 0,
-        override_memo: false,
-        memo: Symbol::new(&env, ""),
-        override_priority: false,
-        priority: Priority::Normal,
-    };
-    let proposal_id = client.create_from_template(&treasurer, &template_id, &overrides);
+    client.approve_proposal(&admin, &proposal_id);
 
-    assert_eq!(proposal_id, 1);
-
-    // Verify proposal
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.recipient, recipient);
-    assert_eq!(proposal.amount, 100);
-    assert_eq!(proposal.memo, Symbol::new(&env, "salary"));
+    // Should fail with InsufficientBalance (not retried)
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(result.is_err());
 }
 
 /// Test creating proposal from template with overrides
