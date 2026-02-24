@@ -201,7 +201,7 @@ impl VaultDAO {
         // 8. Check daily aggregate limit with reputation boost
         // Higher reputation gives higher daily limits (up to 1.5x)
         let adjusted_daily_limit = if rep.score >= 750 {
-            (config.daily_limit * 3) / 2  // 1.5x for 750+
+            (config.daily_limit * 3) / 2 // 1.5x for 750+
         } else {
             config.daily_limit
         };
@@ -214,7 +214,7 @@ impl VaultDAO {
         // 9. Check weekly aggregate limit with reputation boost
         // Higher reputation gives higher weekly limits (up to 1.5x)
         let adjusted_weekly_limit = if rep.score >= 750 {
-            (config.weekly_limit * 3) / 2  // 1.5x for 750+
+            (config.weekly_limit * 3) / 2 // 1.5x for 750+
         } else {
             config.weekly_limit
         };
