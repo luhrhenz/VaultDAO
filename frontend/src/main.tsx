@@ -1,25 +1,32 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
 import { ToastProvider } from './context/ToastContext'
 import { WalletProvider } from './context/WalletContext'
-import { performanceTracker } from './utils/performanceTracking'
-import { registerServiceWorker } from './utils/serviceWorkerUtils'
+import { AppErrorBoundary } from './components/ErrorHandler'
+import { flushOfflineErrorQueue } from './components/ErrorReporting'
 
-// Initialize performance tracking
-if (typeof window !== 'undefined') {
-  (window as any).__performanceTracker = performanceTracker;
+function AppWithErrorBoundary() {
+  useEffect(() => {
+    const onOnline = () => {
+      flushOfflineErrorQueue().catch(() => {})
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [])
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  )
 }
-
-// Register service worker for offline support and caching
-registerServiceWorker();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ToastProvider>
       <WalletProvider>
-        <App />
+        <AppWithErrorBoundary />
       </WalletProvider>
     </ToastProvider>
   </React.StrictMode>,
