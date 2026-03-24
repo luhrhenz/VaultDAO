@@ -520,6 +520,69 @@ pub fn get_recurring_payment(
 }
 
 // ============================================================================
+// Recurring Payments - Listing
+// ============================================================================
+
+/// Return a page of existing recurring payment IDs in ascending creation order.
+///
+/// IDs are assigned sequentially starting at 1. This function scans the
+/// range `[offset+1 .. next_id)` and collects up to `limit` IDs that have
+/// a stored recurring payment entry.
+///
+/// # Arguments
+/// * `offset` - Number of payments to skip (0-based).
+/// * `limit`  - Maximum number of IDs to return. Capped at 100 internally.
+///
+/// # Returns
+/// A vector of recurring payment IDs in ascending order, paginated by offset/limit.
+pub fn get_recurring_payment_ids_paginated(env: &Env, offset: u64, limit: u64) -> Vec<u64> {
+    let cap: u64 = if limit > 100 { 100 } else { limit };
+    let next_id = get_next_recurring_id(env);
+    let mut ids: Vec<u64> = Vec::new(env);
+    let mut skipped: u64 = 0;
+
+    for id in 1..next_id {
+        if !env.storage().persistent().has(&DataKey::Recurring(id)) {
+            continue;
+        }
+        if skipped < offset {
+            skipped += 1;
+            continue;
+        }
+        ids.push_back(id);
+        if ids.len() as u64 >= cap {
+            break;
+        }
+    }
+    ids
+}
+
+/// Return a page of recurring payments in ascending creation order.
+///
+/// # Arguments
+/// * `offset` - Number of payments to skip (0-based).
+/// * `limit`  - Maximum number of payments to return. Capped at 50 internally.
+///
+/// # Returns
+/// A vector of RecurringPayment structs in ascending order by ID.
+pub fn get_recurring_payments_paginated(
+    env: &Env,
+    offset: u64,
+    limit: u64,
+) -> Vec<crate::types::RecurringPayment> {
+    let cap: u64 = if limit > 50 { 50 } else { limit };
+    let ids = get_recurring_payment_ids_paginated(env, offset, cap);
+    let mut payments: Vec<crate::types::RecurringPayment> = Vec::new(env);
+
+    for id in ids {
+        if let Ok(payment) = get_recurring_payment(env, id) {
+            payments.push_back(payment);
+        }
+    }
+    payments
+}
+
+// ============================================================================
 // Streaming Payments
 // ============================================================================
 

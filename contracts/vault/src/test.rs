@@ -8052,3 +8052,169 @@ fn test_list_proposal_ids_pagination() {
     let page4 = client.list_proposal_ids(&10u64, &2u64);
     assert_eq!(page4.len(), 0);
 }
+
+// ============================================================================
+// Recurring Payment Listing Tests
+// ============================================================================
+
+/// list_recurring_payment_ids returns empty vec when no payments exist.
+#[test]
+fn test_list_recurring_payment_ids_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let ids = client.list_recurring_payment_ids(&0u64, &10u64);
+    assert_eq!(ids.len(), 0);
+}
+
+/// list_recurring_payments returns empty vec when no payments exist.
+#[test]
+fn test_list_recurring_payments_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    let payments = client.list_recurring_payments(&0u64, &10u64);
+    assert_eq!(payments.len(), 0);
+}
+
+/// list_recurring_payment_ids returns all IDs in ascending order.
+#[test]
+fn test_list_recurring_payment_ids_ascending_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    // Create three recurring payments
+    let id1 = client.schedule_payment(
+        &admin, &recipient, &token, &100i128,
+        &Symbol::new(&env, "p1"), &17280u64, // ~1 week
+    );
+    let id2 = client.schedule_payment(
+        &admin, &recipient, &token, &200i128,
+        &Symbol::new(&env, "p2"), &17280u64,
+    );
+    let id3 = client.schedule_payment(
+        &admin, &recipient, &token, &300i128,
+        &Symbol::new(&env, "p3"), &17280u64,
+    );
+
+    let ids = client.list_recurring_payment_ids(&0u64, &10u64);
+    assert_eq!(ids.len(), 3);
+    assert_eq!(ids.get(0).unwrap(), id1);
+    assert_eq!(ids.get(1).unwrap(), id2);
+    assert_eq!(ids.get(2).unwrap(), id3);
+    // Strictly ascending
+    assert!(ids.get(0).unwrap() < ids.get(1).unwrap());
+    assert!(ids.get(1).unwrap() < ids.get(2).unwrap());
+}
+
+/// list_recurring_payments returns full payment objects with correct data.
+#[test]
+fn test_list_recurring_payments_returns_full_objects() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    // Create a recurring payment
+    let id = client.schedule_payment(
+        &admin, &recipient, &token, &500i128,
+        &Symbol::new(&env, "test"), &17280u64,
+    );
+
+    let payments = client.list_recurring_payments(&0u64, &10u64);
+    assert_eq!(payments.len(), 1);
+    let p = payments.get(0).unwrap();
+    assert_eq!(p.id, id);
+    assert_eq!(p.amount, 500);
+    assert_eq!(p.recipient, recipient);
+    assert_eq!(p.token, token);
+    assert_eq!(p.is_active, true);
+}
+
+/// Pagination: offset and limit work correctly for recurring payments.
+#[test]
+fn test_list_recurring_payments_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &admin, &Role::Treasurer);
+
+    // Create 5 recurring payments
+    for i in 1u32..=5 {
+        client.schedule_payment(
+            &admin, &recipient, &token, &(i as i128 * 100),
+            &Symbol::new(&env, "p"), &17280u64,
+        );
+    }
+
+    // First page: offset=0, limit=2 → IDs 1,2
+    let page1 = client.list_recurring_payment_ids(&0u64, &2u64);
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap(), 1);
+    assert_eq!(page1.get(1).unwrap(), 2);
+
+    // Second page: offset=2, limit=2 → IDs 3,4
+    let page2 = client.list_recurring_payment_ids(&2u64, &2u64);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap(), 3);
+    assert_eq!(page2.get(1).unwrap(), 4);
+
+    // Third page: offset=4, limit=2 → ID 5 only
+    let page3 = client.list_recurring_payment_ids(&4u64, &2u64);
+    assert_eq!(page3.len(), 1);
+    assert_eq!(page3.get(0).unwrap(), 5);
+
+    // Offset beyond total → empty
+    let page4 = client.list_recurring_payment_ids(&10u64, &2u64);
+    assert_eq!(page4.len(), 0);
+}

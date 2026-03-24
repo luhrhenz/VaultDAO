@@ -1858,6 +1858,51 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Get a recurring payment by ID
+    ///
+    /// # Arguments
+    /// * `payment_id` - ID of the recurring payment to retrieve.
+    ///
+    /// # Returns
+    /// The RecurringPayment if found.
+    pub fn get_recurring_payment(
+        env: Env,
+        payment_id: u64,
+    ) -> Result<RecurringPayment, VaultError> {
+        storage::get_recurring_payment(&env, payment_id)
+    }
+
+    /// List recurring payment IDs with pagination
+    ///
+    /// Returns a page of recurring payment IDs in ascending creation order.
+    ///
+    /// # Arguments
+    /// * `offset` - Number of payments to skip (0-based).
+    /// * `limit`  - Maximum number of IDs to return (capped at 100).
+    ///
+    /// # Returns
+    /// A vector of recurring payment IDs in ascending order.
+    pub fn list_recurring_payment_ids(env: Env, offset: u64, limit: u64) -> Vec<u64> {
+        storage::extend_instance_ttl(&env);
+        storage::get_recurring_payment_ids_paginated(&env, offset, limit)
+    }
+
+    /// List recurring payments with pagination
+    ///
+    /// Returns a page of recurring payments in ascending creation order.
+    /// This is a public read-only endpoint that can be called by anyone.
+    ///
+    /// # Arguments
+    /// * `offset` - Number of payments to skip (0-based).
+    /// * `limit`  - Maximum number of payments to return (capped at 50).
+    ///
+    /// # Returns
+    /// A vector of RecurringPayment structs in ascending order by ID.
+    pub fn list_recurring_payments(env: Env, offset: u64, limit: u64) -> Vec<RecurringPayment> {
+        storage::extend_instance_ttl(&env);
+        storage::get_recurring_payments_paginated(&env, offset, limit)
+    }
+
     //
     // ========================================================================
     // Streaming Payments (feature/streaming-payments)
