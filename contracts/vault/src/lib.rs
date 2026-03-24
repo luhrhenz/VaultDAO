@@ -1549,6 +1549,46 @@ impl VaultDAO {
         storage::get_proposal(&env, proposal_id)
     }
 
+    /// List proposal IDs in ascending creation order (paginated).
+    ///
+    /// Returns up to `limit` proposal IDs, skipping the first `offset` entries.
+    /// IDs are ordered by creation sequence (lowest ID = oldest proposal).
+    /// The result is empty when no proposals exist or `offset` exceeds the total.
+    /// `limit` is capped at 100 per call to bound gas usage.
+    ///
+    /// # Arguments
+    /// * `offset` - Number of proposals to skip (use 0 for the first page).
+    /// * `limit`  - Maximum number of IDs to return (capped at 100).
+    pub fn list_proposal_ids(env: Env, offset: u64, limit: u64) -> Vec<u64> {
+        storage::extend_instance_ttl(&env);
+        storage::get_proposal_ids_paginated(&env, offset, limit)
+    }
+
+    /// List full proposal objects in ascending creation order (paginated).
+    ///
+    /// Equivalent to calling `list_proposal_ids` and then `get_proposal` for
+    /// each ID, but in a single contract invocation. Proposals that cannot be
+    /// loaded (e.g. storage gaps) are silently skipped.
+    /// `limit` is capped at 50 per call to bound gas usage on large payloads.
+    ///
+    /// # Arguments
+    /// * `offset` - Number of proposals to skip (use 0 for the first page).
+    /// * `limit`  - Maximum number of proposals to return (capped at 50).
+    pub fn list_proposals(env: Env, offset: u64, limit: u64) -> Vec<Proposal> {
+        storage::extend_instance_ttl(&env);
+        // Tighter cap for full objects — each Proposal is much larger than a u64
+        let obj_limit: u64 = if limit > 50 { 50 } else { limit };
+        let ids = storage::get_proposal_ids_paginated(&env, offset, obj_limit);
+        let mut proposals: Vec<Proposal> = Vec::new(&env);
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Ok(p) = storage::get_proposal(&env, id) {
+                proposals.push_back(p);
+            }
+        }
+        proposals
+    }
+
     /// Get current pooled slash insurance balance
     pub fn get_insurance_pool(env: Env, token_addr: Address) -> i128 {
         storage::get_insurance_pool(&env, &token_addr)
