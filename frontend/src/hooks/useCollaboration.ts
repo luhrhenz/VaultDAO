@@ -75,7 +75,7 @@ export function useCollaboration({
 
     // Awareness changes (collaborator presence)
     provider.awareness.on('change', () => {
-      const states = Array.from(provider.awareness.getStates().entries()) as Array<[number, any]>;
+      const states = Array.from(provider.awareness.getStates().entries());
       const presences: CollaboratorPresence[] = states
         .filter(([clientId]) => clientId !== provider.awareness.clientID)
         .map(([, state]) => ({
