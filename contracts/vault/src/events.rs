@@ -312,13 +312,12 @@ pub fn emit_stake_slashed(
     env: &Env,
     proposal_id: u64,
     proposer: &Address,
-    slashed_amount: i128,
-    returned_amount: i128,
+    slashed: i128,
+    returned: i128,
 ) {
-    env.events().publish(
-        (Symbol::new(env, "stake_slashed"), proposal_id),
-        (proposer.clone(), slashed_amount, returned_amount),
-    );
+    let topics = (Symbol::new(env, "stake_slashed"), proposal_id);
+    env.events()
+        .publish(topics, (proposer.clone(), slashed, returned));
 }
 
 /// Emit when stake is refunded on successful execution
