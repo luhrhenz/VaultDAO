@@ -1,7 +1,6 @@
 use super::*;
 use crate::types::{
-    CrossVaultConfig, CrossVaultStatus, DexConfig, DisputeResolution, DisputeStatus, FeeStructure,
-    FeeTier, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VaultAction,
+    DexConfig, FeeStructure, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails,
     VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
@@ -8417,15 +8416,6 @@ fn test_list_recurring_payments_pagination() {
 // ---------------------------------------------------------------------------
 // Shared helper for invariant tests
 // ---------------------------------------------------------------------------
-
-fn make_token(env: &Env, admin: &Address) -> Address {
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    soroban_sdk::token::StellarAssetClient::new(env, &token)
-        .mint(&env.current_contract_address(), &100_000);
-    token
-}
 
 /// Build a minimal InitConfig for invariant tests.
 fn inv_config(env: &Env, signers: soroban_sdk::Vec<Address>, threshold: u32) -> InitConfig {

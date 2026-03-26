@@ -5,7 +5,6 @@
 
 #![no_std]
 #![allow(clippy::too_many_arguments)]
-#![allow(dead_code, unused_imports, unused_variables)]
 #![allow(clippy::empty_line_after_outer_attr)]
 #![allow(clippy::unwrap_or_default)]
 #![allow(clippy::unnecessary_unwrap)]
@@ -30,8 +29,7 @@ use types::{
     Milestone, NotificationPreferences, OptionalVaultOracleConfig, Priority, Proposal,
     ProposalAmendment, ProposalStatus, ProposalTemplate, RecoveryConfig, RecoveryProposal,
     RecoveryStatus, RecurringPayment, Reputation, RetryConfig, RetryState, Role, RoleAssignment,
-    StreamStatus, StreamingPayment, Subscription, SubscriptionPayment, SubscriptionStatus,
-    SubscriptionTier, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
+    StreamStatus, StreamingPayment, SwapProposal, SwapResult, TemplateOverrides, ThresholdStrategy,
     TransferDetails, VaultMetrics, VaultOracleConfig, VaultPriceData, VotingStrategy,
 };
 
@@ -3381,6 +3379,7 @@ impl VaultDAO {
         }
     }
 
+    #[allow(dead_code)]
     fn integer_sqrt(value: i128) -> u32 {
         if value <= 0 {
             return 0;
@@ -3394,6 +3393,7 @@ impl VaultDAO {
         x as u32
     }
 
+    #[allow(dead_code)]
     fn validate_voting_strategy(strategy: &VotingStrategy) -> Result<(), VaultError> {
         match strategy {
             VotingStrategy::Simple => Ok(()),
@@ -5035,7 +5035,7 @@ impl VaultDAO {
         let mut success = true;
 
         // Execute operations sequentially
-        for (idx, op) in batch.operations.iter().enumerate() {
+        for op in batch.operations.iter() {
             match Self::execute_batch_operation(&env, &op, &mut rollback_state, &config) {
                 Ok(_) => {
                     executed_count += 1;
