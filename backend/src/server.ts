@@ -17,6 +17,7 @@ import {
   ProposalActivityConsumer,
   ProposalActivityAggregator,
 } from "./modules/proposals/index.js";
+import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import { createLogger } from "./shared/logging/logger.js";
 import type { Server } from "node:http";
@@ -28,6 +29,7 @@ export interface BackendRuntime {
   readonly snapshotService: SnapshotService;
   readonly proposalActivityAggregator: ProposalActivityAggregator;
   readonly jobManager: JobManager;
+  readonly wsServer?: EventWebSocketServer;
 }
 
 export interface BackendServer {
@@ -45,16 +47,39 @@ export function startServer(env: BackendEnv = loadEnv()): BackendServer {
     proposalActivityAggregator.addRecords(records);
   });
 
-  const eventPollingService = new EventPollingService(
-    env,
-    new FileCursorAdapter(),
-    proposalActivityConsumer,
-  );
   const recurringIndexerService = new RecurringIndexerService(
     env,
     new MemoryRecurringStorageAdapter(),
   );
   const snapshotService = new SnapshotService(new MemorySnapshotAdapter());
+
+  const runtime: any = {
+    startedAt: new Date().toISOString(),
+    recurringIndexerService,
+    snapshotService,
+    proposalActivityAggregator,
+    jobManager,
+  };
+
+  const app = createApp(env, runtime);
+
+  const server = app.listen(env.port, env.host, () => {
+    const logger = createLogger("vaultdao-backend");
+    logger.info(
+      `listening on http://${env.host}:${env.port} for ${env.stellarNetwork}`,
+    );
+  });
+
+  const wsServer = new EventWebSocketServer(server);
+  runtime.wsServer = wsServer;
+
+  const eventPollingService = new EventPollingService(
+    env,
+    new FileCursorAdapter(),
+    proposalActivityConsumer,
+    wsServer,
+  );
+  runtime.eventPollingService = eventPollingService;
 
   jobManager.registerJob({
     name: "proposal-consumer",
@@ -77,25 +102,7 @@ export function startServer(env: BackendEnv = loadEnv()): BackendServer {
     isRunning: () => recurringIndexerService.getStatus().isIndexing,
   });
 
-  const runtime: BackendRuntime = {
-    startedAt: new Date().toISOString(),
-    eventPollingService,
-    recurringIndexerService,
-    snapshotService,
-    proposalActivityAggregator,
-    jobManager,
-  };
-
   void jobManager.startAll();
 
-  const app = createApp(env, runtime);
-
-  const server = app.listen(env.port, env.host, () => {
-    const logger = createLogger("vaultdao-backend");
-    logger.info(
-      `listening on http://${env.host}:${env.port} for ${env.stellarNetwork}`,
-    );
-  });
-
-  return { server, runtime };
+  return { server, runtime: runtime as BackendRuntime };
 }
