@@ -60,8 +60,7 @@ fn verify_hash_chain(client: &VaultDAOClient, start_id: u64, end_id: u64) -> boo
         let entry = client.get_audit_entry(&i);
         assert_eq!(
             entry.prev_hash, prev_hash,
-            "Hash chain broken at entry {}",
-            i
+            "Hash chain broken at entry {i}",
         );
         prev_hash = entry.hash;
     }
@@ -457,8 +456,7 @@ fn test_audit_trail_timestamp_ordering() {
         let entry = client.get_audit_entry(&i);
         assert!(
             entry.timestamp >= prev_timestamp,
-            "Timestamps not monotonically increasing at entry {}",
-            i
+            "Timestamps not monotonically increasing at entry {i}",
         );
         prev_timestamp = entry.timestamp;
     }
