@@ -7388,8 +7388,13 @@ fn test_user_volume_tracking() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let user = Address::generate(&env);
-    let token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10_000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -7397,13 +7402,36 @@ fn test_user_volume_tracking() {
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
 
-    // Initially, volume should be zero
-    let volume = client.get_user_volume(&user, &token);
-    assert_eq!(volume, 0);
+    // Enable fee structure
+    let fee_structure = FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 100, // 1%
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+    client.set_fee_structure(&admin, &fee_structure);
 
-    // Note: Volume is updated during proposal execution
-    // In a full integration test, we would execute proposals
-    // and verify volume increases
+    assert_eq!(client.get_user_volume(&admin, &token), 0);
+
+    // Use amount below timelock_threshold (500) to avoid timelock delay
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&admin, &proposal_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    // Volume should equal the proposal amount
+    assert_eq!(client.get_user_volume(&admin, &token), 100);
 }
 
 #[test]
@@ -7415,7 +7443,13 @@ fn test_fees_collected_tracking() {
     let client = VaultDAOClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10_000);
 
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
@@ -7423,13 +7457,87 @@ fn test_fees_collected_tracking() {
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
 
-    // Initially, fees collected should be zero
-    let fees = client.get_fees_collected(&token);
-    assert_eq!(fees, 0);
+    assert_eq!(client.get_fees_collected(&token), 0);
 
-    // Note: Fees are collected during proposal execution
-    // In a full integration test, we would execute proposals
-    // and verify fees are collected
+    // Enable fee structure: 1% base fee
+    let fee_structure = FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 100,
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: treasury.clone(),
+        enabled: true,
+    };
+    client.set_fee_structure(&admin, &fee_structure);
+
+    // Use amount below timelock_threshold (500) to avoid timelock delay
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&admin, &proposal_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    // Fee = 100 * 100 / 10000 = 1 stroop
+    assert_eq!(client.get_fees_collected(&token), 1);
+    // Recipient receives amount minus fee
+    let recipient_balance = soroban_sdk::token::Client::new(&env, &token).balance(&recipient);
+    assert_eq!(recipient_balance, 99);
+    // Treasury receives the fee
+    let treasury_balance = soroban_sdk::token::Client::new(&env, &token).balance(&treasury);
+    assert_eq!(treasury_balance, 1);
+}
+
+#[test]
+fn test_fee_not_collected_when_disabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let _treasury = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&contract_id, &10_000);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = default_init_config(&env, signers, 1);
+    client.initialize(&admin, &config);
+
+    // Fee structure disabled (default)
+    // Use amount below timelock_threshold (500) to avoid timelock delay
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&admin, &proposal_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    // No fees collected, recipient gets full amount
+    assert_eq!(client.get_fees_collected(&token), 0);
+    let recipient_balance = soroban_sdk::token::Client::new(&env, &token).balance(&recipient);
+    assert_eq!(recipient_balance, 100);
 }
 
 #[test]

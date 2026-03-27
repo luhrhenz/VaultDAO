@@ -4129,8 +4129,9 @@ impl VaultDAO {
             return Err(VaultError::InsufficientBalance);
         }
 
-        // Execute transfer
-        if token::try_transfer(env, &proposal.token, &proposal.recipient, proposal.amount).is_err()
+        // Execute transfer (deduct protocol fee from transfer amount)
+        let transfer_amount = proposal.amount.saturating_sub(fee_amount);
+        if token::try_transfer(env, &proposal.token, &proposal.recipient, transfer_amount).is_err()
         {
             return Err(VaultError::TransferFailed);
         }
