@@ -18,6 +18,10 @@ export class JobManager {
   private readonly logger = createLogger("job-manager");
   private jobs = new Map<string, Job>();
 
+  private toErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   /**
    * Register a job for management.
    */
@@ -34,26 +38,42 @@ export class JobManager {
    * Start all registered jobs.
    */
   public async startAll(): Promise<void> {
+    const jobs = Array.from(this.jobs.values());
     const results = await Promise.allSettled(
-      Array.from(this.jobs.values()).map((job) =>
-        Promise.resolve(job.start()).then(
+      jobs.map((job) =>
+        Promise.resolve()
+          .then(() => job.start())
+          .then(
           () => {
             this.logger.info("job started", { job: job.name });
           },
           (err: unknown) => {
             this.logger.error("job start failed", {
               job: job.name,
-              error: err instanceof Error ? err.message : String(err),
+              error: this.toErrorMessage(err),
             });
             throw err;
           }
-        )
+          )
       )
     );
 
-    const rejected = results.filter((r) => r.status === "rejected");
-    if (rejected.length > 0) {
-      throw new Error(`${rejected.length} jobs failed to start`);
+    const failures = results.flatMap((result, index) => {
+      if (result.status !== "rejected") {
+        return [];
+      }
+
+      return [{
+        name: jobs[index].name,
+        error: this.toErrorMessage(result.reason),
+      }];
+    });
+
+    if (failures.length > 0) {
+      const details = failures
+        .map((failure) => `- ${failure.name}: ${failure.error}`)
+        .join("\n");
+      throw new Error(`${failures.length} jobs failed to start:\n${details}`);
     }
   }
 
@@ -70,7 +90,7 @@ export class JobManager {
         await Promise.resolve(job.stop());
         this.logger.info("job stopped", { job: job.name });
       } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
+        const errorMessage = this.toErrorMessage(err);
         this.logger.warn("job stop error", {
           job: job.name,
           error: errorMessage,

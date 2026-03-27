@@ -7,7 +7,7 @@ import {
   buildReadinessPayload,
   buildStatusPayload,
 } from "./health.service.js";
-import { success, error } from "../../shared/http/response.js";
+import { success } from "../../shared/http/response.js";
 
 export function getHealthController(
   env: BackendEnv,
@@ -33,14 +33,7 @@ export function getReadinessController(
 ): RequestHandler {
   return (_request, response) => {
     const payload = buildReadinessPayload(env, runtime);
-    if (payload.ready) {
-      success(response, payload);
-    } else {
-      error(response, { 
-        message: "Service not ready", 
-        status: 503 
-      });
-    }
+    success(response, payload, { status: payload.ready ? 200 : 503 });
   };
 }
 

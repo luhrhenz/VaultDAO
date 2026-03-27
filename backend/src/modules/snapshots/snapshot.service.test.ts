@@ -166,6 +166,95 @@ test("SnapshotService - processEvent - updates existing signer role", async () =
   assert.equal(signer!.role, Role.TREASURER); // Role updated
 });
 
+test("SnapshotService - processEvent - SIGNER_REMOVED marks signer inactive and ROLE_ASSIGNED reactivates", async () => {
+  const adapter = new MemorySnapshotAdapter();
+  const service = new SnapshotService(adapter);
+
+  const initEvent: NormalizedEvent<SignerAddedData> = {
+    type: EventType.INITIALIZED,
+    data: {
+      address: ADMIN_ADDRESS,
+      role: Role.ADMIN,
+      ledger: 100,
+      timestamp: "2026-03-25T12:00:00Z",
+    },
+    metadata: {
+      id: "event-1",
+      contractId: CONTRACT_ID,
+      ledger: 100,
+      ledgerClosedAt: "2026-03-25T12:00:00Z",
+    },
+  };
+
+  const roleEvent: NormalizedEvent<RoleAssignedData> = {
+    type: EventType.ROLE_ASSIGNED,
+    data: {
+      address: TREASURER_ADDRESS,
+      role: Role.TREASURER,
+    },
+    metadata: {
+      id: "event-2",
+      contractId: CONTRACT_ID,
+      ledger: 200,
+      ledgerClosedAt: "2026-03-25T12:05:00Z",
+    },
+  };
+
+  await service.processEvent(initEvent);
+  await service.processEvent(roleEvent);
+
+  const removeEvent: NormalizedEvent = {
+    type: EventType.SIGNER_REMOVED,
+    data: {
+      signer: TREASURER_ADDRESS,
+      totalSigners: 1,
+    },
+    metadata: {
+      id: "event-3",
+      contractId: CONTRACT_ID,
+      ledger: 300,
+      ledgerClosedAt: "2026-03-25T12:10:00Z",
+    },
+  };
+
+  const removeResult = await service.processEvent(removeEvent);
+  assert.equal(removeResult.success, true);
+  assert.equal(removeResult.signersUpdated, 1);
+
+  const removedSigner = await service.getSigner(CONTRACT_ID, TREASURER_ADDRESS);
+  assert.notEqual(removedSigner, null);
+  assert.equal(removedSigner!.isActive, false);
+  assert.equal(removedSigner!.lastActivityLedger, 300);
+  assert.equal(removedSigner!.lastActivityAt, "2026-03-25T12:10:00Z");
+
+  const afterRemove = await service.getSnapshot(CONTRACT_ID);
+  assert.notEqual(afterRemove, null);
+  assert.equal(afterRemove!.totalSigners, 1);
+
+  const reAddEvent: NormalizedEvent<RoleAssignedData> = {
+    type: EventType.ROLE_ASSIGNED,
+    data: {
+      address: TREASURER_ADDRESS,
+      role: Role.TREASURER,
+    },
+    metadata: {
+      id: "event-4",
+      contractId: CONTRACT_ID,
+      ledger: 400,
+      ledgerClosedAt: "2026-03-25T12:15:00Z",
+    },
+  };
+
+  await service.processEvent(reAddEvent);
+  const readdedSigner = await service.getSigner(CONTRACT_ID, TREASURER_ADDRESS);
+  assert.notEqual(readdedSigner, null);
+  assert.equal(readdedSigner!.isActive, true);
+
+  const afterReAdd = await service.getSnapshot(CONTRACT_ID);
+  assert.notEqual(afterReAdd, null);
+  assert.equal(afterReAdd!.totalSigners, 2);
+});
+
 test("SnapshotService - processEvents - batch processing", async () => {
   const adapter = new MemorySnapshotAdapter();
   const service = new SnapshotService(adapter);

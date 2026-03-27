@@ -18,6 +18,8 @@ const mockEnv = {
   websocketUrl: "ws://localhost:8080",
   eventPollingIntervalMs: 5000,
   eventPollingEnabled: false,
+  corsOrigin: ["*"],
+  requestBodyLimit: "1mb",
 };
 
 const mockRuntime = {
@@ -27,14 +29,11 @@ const mockRuntime = {
   },
 };
 
-test("builds a healthy service payload", () => {
+test("builds a minimal liveness payload", () => {
   const payload = buildHealthPayload(mockEnv, mockRuntime as any);
 
   assert.equal(payload.ok, true);
-  assert.equal(payload.service, "vaultdao-backend");
-  assert.equal(payload.network, "testnet");
-  assert.equal(payload.contractId, "CDTEST");
-  assert.match(payload.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(payload, { ok: true });
 });
 
 test("builds a status payload", () => {
@@ -53,11 +52,11 @@ test("health and status mask contractId in production", () => {
   const health = buildHealthPayload(prodEnv, mockRuntime as any);
   const status = buildStatusPayload(prodEnv, mockRuntime as any);
 
+  assert.deepEqual(health, { ok: true });
   assert.equal(
-    health.contractId,
+    status.contractId,
     `${longId.slice(0, 6)}...${longId.slice(-6)}`,
   );
-  assert.equal(status.contractId, health.contractId);
 });
 
 test("builds a readiness payload with dependency checks", () => {
@@ -207,8 +206,8 @@ test("buildReadinessPayload dependency checks include all required fields", () =
   });
 });
 
-test("buildHealthPayload includes version and build info", () => {
-  const payload = buildHealthPayload(mockEnv, mockRuntime as any);
+test("buildStatusPayload includes version and build info", () => {
+  const payload = buildStatusPayload(mockEnv, mockRuntime as any);
 
   assert.ok(payload.version, "Should include version");
   assert.match(payload.version, /\d+\.\d+\.\d+/, "Version should be semantic");

@@ -49,17 +49,9 @@ export interface ReadinessPayload {
   };
 }
 
-export function buildHealthPayload(env: BackendEnv, runtime: BackendRuntime) {
+export function buildHealthPayload(_env: BackendEnv, _runtime: BackendRuntime) {
   return {
     ok: true,
-    service: "vaultdao-backend",
-    version: VERSION,
-    build: packageMetadata.build,
-    environment: env.nodeEnv,
-    network: env.stellarNetwork,
-    contractId: publicContractIdForApi(env.contractId, env.nodeEnv),
-    timestamp: new Date().toISOString(),
-    eventPolling: runtime.eventPollingService.getStatus(),
   };
 }
 

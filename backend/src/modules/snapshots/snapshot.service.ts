@@ -16,6 +16,7 @@ import type {
   SnapshotUpdateResult,
   RoleAssignedData,
   SignerAddedData,
+  SignerRemovedData,
   SnapshotStats,
   SnapshotFilter,
 } from "./types.js";
@@ -71,7 +72,17 @@ export class SnapshotService {
           signersUpdated = initResult.signersUpdated;
           rolesUpdated = initResult.rolesUpdated;
           break;
+
+        case EventType.SIGNER_REMOVED:
+          const removeResult = await this.processSignerRemoved(snapshot, event);
+          signersUpdated = removeResult.signersUpdated;
+          rolesUpdated = removeResult.rolesUpdated;
+          break;
       }
+
+      const activeSignerCount = Array.from(snapshot.signers.values()).filter(
+        (signer) => signer.isActive
+      ).length;
 
       // Update snapshot metadata
       snapshot = {
@@ -79,7 +90,7 @@ export class SnapshotService {
         lastProcessedLedger: event.metadata.ledger,
         lastProcessedEventId: event.metadata.id,
         snapshotAt: new Date().toISOString(),
-        totalSigners: snapshot.signers.size,
+        totalSigners: activeSignerCount,
         totalRoleAssignments: snapshot.roles.size,
       };
 
@@ -276,6 +287,7 @@ export class SnapshotService {
       const updatedSigner: SignerSnapshot = {
         ...existingSigner,
         role: role as Role,
+        isActive: true,
         lastActivityAt: ledgerClosedAt,
         lastActivityLedger: ledger,
       };
@@ -284,6 +296,32 @@ export class SnapshotService {
     }
 
     return { signersUpdated, rolesUpdated };
+  }
+
+  /**
+   * Process a SIGNER_REMOVED event.
+   */
+  private async processSignerRemoved(
+    snapshot: ContractSnapshot,
+    event: NormalizedEvent<SignerRemovedData>
+  ): Promise<{ signersUpdated: number; rolesUpdated: number }> {
+    const address = event.data.signer;
+    const { ledger, ledgerClosedAt } = event.metadata;
+
+    const existingSigner = snapshot.signers.get(address);
+    if (!existingSigner) {
+      return { signersUpdated: 0, rolesUpdated: 0 };
+    }
+
+    const updatedSigner: SignerSnapshot = {
+      ...existingSigner,
+      isActive: false,
+      lastActivityAt: ledgerClosedAt,
+      lastActivityLedger: ledger,
+    };
+    snapshot.signers.set(address, updatedSigner);
+
+    return { signersUpdated: 1, rolesUpdated: 0 };
   }
 
   /**

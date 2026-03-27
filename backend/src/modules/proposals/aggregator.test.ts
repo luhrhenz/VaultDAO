@@ -91,3 +91,36 @@ test("sorting applies before pagination (newest first)", () => {
   assert.equal(page.items[0].proposalId, "new");
   assert.equal(page.items[1].proposalId, "mid");
 });
+
+test("enforces maxProposals by evicting oldest latest-activity entries", () => {
+  const agg = new ProposalActivityAggregator({ maxProposals: 2 });
+
+  agg.addRecord(makeCreatedRecord("old", "2025-01-01T00:00:00.000Z"));
+  agg.addRecord(makeCreatedRecord("mid", "2026-01-01T00:00:00.000Z"));
+  agg.addRecord(makeCreatedRecord("new", "2026-06-01T00:00:00.000Z"));
+
+  assert.equal(agg.getProposalCount(), 2);
+  assert.equal(agg.getSummary("old"), null);
+  assert.notEqual(agg.getSummary("mid"), null);
+  assert.notEqual(agg.getSummary("new"), null);
+});
+
+test("logs warning when eviction occurs", () => {
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+
+  console.warn = (message?: unknown) => {
+    warnings.push(String(message));
+  };
+
+  try {
+    const agg = new ProposalActivityAggregator({ maxProposals: 1 });
+    agg.addRecord(makeCreatedRecord("p1", "2026-01-01T00:00:00.000Z"));
+    agg.addRecord(makeCreatedRecord("p2", "2026-01-02T00:00:00.000Z"));
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length > 0, true);
+  assert.match(warnings[0], /evicted 1 oldest proposals/i);
+});

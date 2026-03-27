@@ -65,14 +65,22 @@ export interface ActivityBucket {
  * Supports in-memory aggregation with hooks for persistence integration.
  */
 export class ProposalActivityAggregator {
+  private static readonly DEFAULT_MAX_PROPOSALS = 10_000;
+
   private proposalCache: Map<string, ProposalActivityRecord[]> = new Map();
   private proposalLatestActivity: Map<string, ProposalActivityRecord> = new Map();
   private onRecordAdded?: (record: ProposalActivityRecord) => void;
+  private maxProposals: number;
 
   constructor(options?: {
     onRecordAdded?: (record: ProposalActivityRecord) => void;
+    maxProposals?: number;
   }) {
     this.onRecordAdded = options?.onRecordAdded;
+    this.maxProposals =
+      options?.maxProposals && options.maxProposals > 0
+        ? Math.floor(options.maxProposals)
+        : ProposalActivityAggregator.DEFAULT_MAX_PROPOSALS;
   }
 
   /**
@@ -89,6 +97,8 @@ export class ProposalActivityAggregator {
     if (!currentLatest || record.timestamp > currentLatest.timestamp) {
       this.proposalLatestActivity.set(record.proposalId, record);
     }
+
+    this.evictIfNeeded();
 
     // Trigger callback
     if (this.onRecordAdded) {
@@ -323,6 +333,41 @@ export class ProposalActivityAggregator {
   }
 
   /**
+   * Evict oldest proposals by latest activity until under the configured cap.
+   */
+  private evictIfNeeded(): void {
+    if (this.proposalCache.size <= this.maxProposals) {
+      return;
+    }
+
+    const candidates = Array.from(this.proposalLatestActivity.entries()).sort(
+      (a, b) =>
+        new Date(a[1].timestamp).getTime() - new Date(b[1].timestamp).getTime()
+    );
+
+    const toEvict = this.proposalCache.size - this.maxProposals;
+    const evicted: string[] = [];
+
+    for (let i = 0; i < toEvict; i++) {
+      const entry = candidates[i];
+      if (!entry) {
+        break;
+      }
+      const [proposalId] = entry;
+      this.proposalCache.delete(proposalId);
+      this.proposalLatestActivity.delete(proposalId);
+      evicted.push(proposalId);
+    }
+
+    if (evicted.length > 0) {
+      console.warn(
+        `[proposal-aggregator] evicted ${evicted.length} oldest proposals to enforce maxProposals=${this.maxProposals}`,
+        { evictedProposalIds: evicted }
+      );
+    }
+  }
+
+  /**
    * Gets the total number of proposals being tracked.
    */
   public getProposalCount(): number {
@@ -346,6 +391,7 @@ export class ProposalActivityAggregator {
  */
 export function createProposalAggregator(options?: {
   onRecordAdded?: (record: ProposalActivityRecord) => void;
+  maxProposals?: number;
 }): ProposalActivityAggregator {
   return new ProposalActivityAggregator(options);
 }
