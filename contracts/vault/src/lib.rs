@@ -5699,7 +5699,7 @@ impl VaultDAO {
                 grants.set(
                     i,
                     types::PermissionGrant {
-                        permission: permission.clone(),
+                        permission,
                         granted_by: admin.clone(),
                         granted_at: env.ledger().sequence() as u64,
                         expires_at,
@@ -5711,7 +5711,7 @@ impl VaultDAO {
         }
         if !replaced {
             grants.push_back(types::PermissionGrant {
-                permission: permission.clone(),
+                permission,
                 granted_by: admin.clone(),
                 granted_at: env.ledger().sequence() as u64,
                 expires_at,
@@ -5791,7 +5791,7 @@ impl VaultDAO {
         }
 
         let delegation = types::DelegatedPermission {
-            permission: permission.clone(),
+            permission,
             delegator: delegator.clone(),
             delegatee: delegatee.clone(),
             granted_at: env.ledger().sequence() as u64,
@@ -5828,10 +5828,8 @@ impl VaultDAO {
             let now = env.ledger().sequence() as u64;
             let grants = storage::get_permissions(&env, &addr);
             for g in grants.iter() {
-                if g.permission == permission {
-                    if g.expires_at.map_or(false, |exp| now > exp) {
-                        return Err(VaultError::ProposalExpired);
-                    }
+                if g.permission == permission && g.expires_at.is_some_and(|exp| now > exp) {
+                    return Err(VaultError::ProposalExpired);
                 }
             }
             Err(VaultError::Unauthorized)
