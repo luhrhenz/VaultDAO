@@ -10942,7 +10942,7 @@ fn test_remove_signer_above_threshold_succeeds() {
     client.initialize(&admin, &default_init_config(&env, signers, 2));
 
     client.remove_signer(&admin, &signer2);
-    assert_eq!(client.get_signers().unwrap().len(), 2);
+    assert_eq!(client.get_signers().len(), 2);
 }
 
 // -----------------------------------------------------------------------------
