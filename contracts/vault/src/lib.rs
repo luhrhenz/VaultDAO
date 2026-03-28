@@ -1200,6 +1200,17 @@ impl VaultDAO {
             Self::call_hook(&env, &hook, proposal_id, true);
         }
 
+        // Capture snapshot before transfer to enable admin rollback if needed
+        let snapshot = crate::types::ExecutionSnapshot {
+            proposal: proposal.clone(),
+            was_in_priority_queue: storage::is_in_priority_queue(
+                &env,
+                proposal.priority.clone() as u32,
+                proposal_id,
+            ),
+        };
+        storage::set_execution_snapshot(&env, proposal_id, &snapshot);
+
         // Attempt execution — retryable failures are handled below
         let exec_result =
             Self::try_execute_transfer(&env, &executor, &mut proposal, current_ledger);
@@ -5351,6 +5362,36 @@ impl VaultDAO {
     /// Retrieve batch details
     pub fn get_batch(env: Env, batch_id: u64) -> Result<BatchTransaction, VaultError> {
         storage::get_batch(&env, batch_id)
+    }
+
+    /// Reverse a transfer recorded in an execution snapshot.
+    ///
+    /// Only callable by an admin. Reads the snapshot stored under `proposal_id`,
+    /// transfers the recorded amount back from the recipient to the vault, then
+    /// clears the snapshot. Returns `SnapshotNotFound` when no snapshot exists.
+    pub fn rollback_execution(
+        env: Env,
+        admin: Address,
+        proposal_id: u64,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let snapshot = storage::get_execution_snapshot(&env, proposal_id)
+            .ok_or(VaultError::ProposalNotFound)?;
+
+        let proposal = &snapshot.proposal;
+
+        // Reverse each transfer: send the recorded amount back to the proposer
+        // (the vault authorizes outgoing transfers from its own balance)
+        token::transfer(&env, &proposal.token, &proposal.proposer, proposal.amount);
+
+        storage::remove_execution_snapshot(&env, proposal_id);
+
+        Ok(())
     }
 
     /// Validate a single batch operation

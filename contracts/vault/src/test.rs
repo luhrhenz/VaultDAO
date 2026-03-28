@@ -8087,6 +8087,140 @@ fn test_execution_rollback_restores_priority_queue_on_transfer_failure() {
 }
 
 // ============================================================================
+// rollback_execution tests
+// ============================================================================
+
+#[test]
+fn test_rollback_execution_reverses_transfer_and_clears_snapshot() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // Set up a real SAC token so the transfer actually executes
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    // Fund the vault with 500 tokens
+    token_sac.mint(&contract_id, &500);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "snap"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+    // Execute — snapshot is stored before the transfer and persists after success
+    client.execute_proposal(&admin, &proposal_id);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+    let proposer_before = token_client.balance(&signer1);
+
+    // Rollback: vault sends the recorded amount back to the proposer
+    client.rollback_execution(&admin, &proposal_id);
+
+    let proposer_after = token_client.balance(&signer1);
+    assert_eq!(proposer_after - proposer_before, 100);
+
+    // Snapshot must be cleared — second rollback should fail with ProposalNotFound
+    let res = client.try_rollback_execution(&admin, &proposal_id);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotFound)));
+}
+
+#[test]
+fn test_rollback_execution_no_snapshot_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        velocity_limit: VelocityConfig {
+            limit: 10000,
+            window: 3600,
+        },
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        veto_addresses: Vec::new(&env),
+        pre_execution_hooks: soroban_sdk::Vec::new(&env),
+        post_execution_hooks: soroban_sdk::Vec::new(&env),
+        default_voting_deadline: 0,
+        retry_config: crate::types::RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(&env),
+        staking_config: crate::types::StakingConfig::default(),
+    };
+    client.initialize(&admin, &config);
+
+    // No snapshot stored for proposal_id 999
+    let res = client.try_rollback_execution(&admin, &999);
+    assert_eq!(res, Err(Ok(VaultError::ProposalNotFound)));
+}
+
+// ============================================================================
 // get_config tests (feature/public-vault-config-getter)
 // ============================================================================
 

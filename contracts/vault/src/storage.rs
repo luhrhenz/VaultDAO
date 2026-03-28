@@ -907,14 +907,12 @@ pub fn set_execution_snapshot(env: &Env, proposal_id: u64, snapshot: &ExecutionS
         .extend_ttl(&key, DAY_IN_LEDGERS, DAY_IN_LEDGERS);
 }
 
-#[allow(dead_code)]
 pub fn get_execution_snapshot(env: &Env, proposal_id: u64) -> Option<ExecutionSnapshot> {
     env.storage()
         .temporary()
         .get(&DataKey::ExecutionSnapshot(proposal_id))
 }
 
-#[allow(dead_code)]
 pub fn remove_execution_snapshot(env: &Env, proposal_id: u64) {
     env.storage()
         .temporary()
