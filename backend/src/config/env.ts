@@ -17,6 +17,8 @@ export interface BackendEnv {
   readonly corsOrigin: string[];
   readonly requestBodyLimit: string;
   readonly apiKey?: string;
+  readonly cursorStorageType: "file" | "database";
+  readonly databasePath: string;
 }
 
 const DEFAULT_CONTRACT_ID =
@@ -28,6 +30,7 @@ const ALLOWED_STELLAR_NETWORKS = new Set([
   "futurenet",
   "standalone",
 ]);
+const ALLOWED_CURSOR_STORAGE_TYPES = new Set(["file", "database"]);
 
 function readValue(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -149,6 +152,8 @@ export function loadEnv(): BackendEnv {
   const corsOrigin = readCommaSeparatedString("CORS_ORIGIN", nodeEnv === "production" ? [] : ["*"]);
   const requestBodyLimit = readString("REQUEST_BODY_LIMIT", "10kb");
   const apiKey = readValue("API_KEY");
+  const cursorStorageType = readString("CURSOR_STORAGE_TYPE", "file") as "file" | "database";
+  const databasePath = readString("DATABASE_PATH", "./vaultdao.sqlite");
 
   validateRequiredString("HOST", host, issues);
   validateAllowedValue("NODE_ENV", nodeEnv, ALLOWED_NODE_ENVS, issues);
@@ -162,6 +167,12 @@ export function loadEnv(): BackendEnv {
   validateUrl("HORIZON_URL", horizonUrl, ["http:", "https:"], issues);
   validateUrl("VITE_WS_URL", websocketUrl, ["ws:", "wss:"], issues);
   validateContractId(contractId, nodeEnv, issues);
+  validateAllowedValue(
+    "CURSOR_STORAGE_TYPE",
+    cursorStorageType,
+    ALLOWED_CURSOR_STORAGE_TYPES,
+    issues,
+  );
 
   if (nodeEnv === "production" && corsOrigin.length === 0) {
     issues.push("CORS_ORIGIN is required in production environment.");
@@ -192,5 +203,7 @@ export function loadEnv(): BackendEnv {
     corsOrigin,
     requestBodyLimit,
     apiKey,
+    cursorStorageType,
+    databasePath,
   };
 }

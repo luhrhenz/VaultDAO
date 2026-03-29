@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import {
   EventPollingService,
   FileCursorAdapter,
+  DatabaseCursorAdapter,
 } from "./modules/events/index.js";
 import {
   RecurringIndexerService,
@@ -21,8 +22,7 @@ import { EventWebSocketServer } from "./modules/websocket/websocket.server.js";
 import { JobManager } from "./modules/jobs/job.manager.js";
 import type { NotificationQueue } from "./modules/notifications/notification.types.js";
 import { createLogger } from "./shared/logging/logger.js";
-import { HorizonClient } from "./shared/rpc/horizon.client.js";
-import { TransactionsService } from "./modules/transactions/index.js";
+import { SqliteStorageAdapter } from "./shared/storage/index.js";
 import type { Server } from "node:http";
 
 export interface BackendRuntime {
@@ -84,9 +84,16 @@ export function startServer(
   const wsServer = new EventWebSocketServer(server);
   runtime.wsServer = wsServer;
 
+  const cursorStorage =
+    env.cursorStorageType === "database"
+      ? new DatabaseCursorAdapter(
+          new SqliteStorageAdapter(env.databasePath, "event_cursors"),
+        )
+      : new FileCursorAdapter();
+
   const eventPollingService = new EventPollingService(
     env,
-    new FileCursorAdapter(),
+    cursorStorage,
     proposalActivityConsumer,
     wsServer,
     snapshotService,
