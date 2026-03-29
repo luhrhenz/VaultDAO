@@ -31,6 +31,7 @@ const ALLOWED_STELLAR_NETWORKS = new Set([
   "standalone",
 ]);
 const ALLOWED_CURSOR_STORAGE_TYPES = new Set(["file", "database"]);
+const MIN_POLLING_INTERVAL_MS = 1000;
 
 function readValue(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -166,6 +167,13 @@ export function loadEnv(): BackendEnv {
   validateUrl("SOROBAN_RPC_URL", sorobanRpcUrl, ["http:", "https:"], issues);
   validateUrl("HORIZON_URL", horizonUrl, ["http:", "https:"], issues);
   validateUrl("VITE_WS_URL", websocketUrl, ["ws:", "wss:"], issues);
+
+  if (eventPollingIntervalMs < MIN_POLLING_INTERVAL_MS) {
+    issues.push(
+      `EVENT_POLLING_INTERVAL_MS must be at least ${MIN_POLLING_INTERVAL_MS}ms to prevent excessive RPC load. Received "${eventPollingIntervalMs}".`,
+    );
+  }
+
   validateContractId(contractId, nodeEnv, issues);
   validateAllowedValue(
     "CURSOR_STORAGE_TYPE",

@@ -38,5 +38,8 @@ export function createSnapshotRouter(service: SnapshotService) {
   router.get("/:contractId/roles", validateContract, ctrl.getRoles);
   router.get("/:contractId/stats", validateContract, ctrl.getStats);
 
+  // Trigger manual rebuild
+  router.post("/:contractId/rebuild", validateContract, ctrl.rebuildSnapshot);
+
   return router;
 }

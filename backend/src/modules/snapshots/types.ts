@@ -141,6 +141,7 @@ export interface SnapshotUpdateResult {
   readonly signersUpdated: number;
   readonly rolesUpdated: number;
   readonly eventsProcessed: number;
+  readonly skippedEvents?: number;
   readonly lastProcessedLedger: number;
   readonly error?: string;
 }

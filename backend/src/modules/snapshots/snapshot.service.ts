@@ -127,22 +127,49 @@ export class SnapshotService {
   /**
    * Process multiple events in batch.
    */
-  async processEvents(events: NormalizedEvent[]): Promise<SnapshotUpdateResult> {
+  async processEvents(
+    events: NormalizedEvent[],
+    options: { maxConsecutiveErrors?: number } = {},
+  ): Promise<SnapshotUpdateResult> {
+    const { maxConsecutiveErrors = 3 } = options;
     let totalSignersUpdated = 0;
     let totalRolesUpdated = 0;
     let totalEventsProcessed = 0;
+    let consecutiveErrors = 0;
     let lastLedger = 0;
     const errors: string[] = [];
 
-    for (const event of events) {
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
       const result = await this.processEvent(event);
-      totalSignersUpdated += result.signersUpdated;
-      totalRolesUpdated += result.rolesUpdated;
-      totalEventsProcessed += result.eventsProcessed;
-      lastLedger = Math.max(lastLedger, result.lastProcessedLedger);
 
-      if (!result.success && result.error) {
-        errors.push(result.error);
+      if (result.success) {
+        totalSignersUpdated += result.signersUpdated;
+        totalRolesUpdated += result.rolesUpdated;
+        totalEventsProcessed += result.eventsProcessed;
+        lastLedger = Math.max(lastLedger, result.lastProcessedLedger);
+        consecutiveErrors = 0; // Reset counter on success
+      } else {
+        consecutiveErrors++;
+        if (result.error) {
+          errors.push(result.error);
+        }
+
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          const skipped = events.length - (i + 1);
+          console.warn(
+            `[snapshot-service] max consecutive errors (${maxConsecutiveErrors}) reached — skipping remaining ${skipped} events in batch`,
+          );
+          return {
+            success: false,
+            signersUpdated: totalSignersUpdated,
+            rolesUpdated: totalRolesUpdated,
+            eventsProcessed: totalEventsProcessed,
+            skippedEvents: skipped,
+            lastProcessedLedger: lastLedger,
+            error: errors.join("; "),
+          };
+        }
       }
     }
 
@@ -151,6 +178,7 @@ export class SnapshotService {
       signersUpdated: totalSignersUpdated,
       rolesUpdated: totalRolesUpdated,
       eventsProcessed: totalEventsProcessed,
+      skippedEvents: 0,
       lastProcessedLedger: lastLedger,
       error: errors.length > 0 ? errors.join("; ") : undefined,
     };
