@@ -129,6 +129,63 @@ test("Rate Limiter", async (t) => {
     assert.equal(nextCalled, 2, "Should allow requests after window expires");
   });
 
+  await t.test("sets X-RateLimit headers on allowed requests", () => {
+    const middleware = createRateLimitMiddleware({
+      windowMs: 1000,
+      maxRequests: 5,
+    });
+
+    const mockReq = {
+      headers: {},
+      socket: { remoteAddress: "10.0.0.1" },
+      get: () => undefined,
+    } as unknown as Request;
+
+    const headers: Record<string, string> = {};
+    const mockRes = {
+      set: (h: Record<string, string>) => { Object.assign(headers, h); return mockRes; },
+      status: () => mockRes,
+      json: () => mockRes,
+    } as unknown as Response;
+
+    middleware(mockReq, mockRes, () => {});
+
+    assert.equal(headers["X-RateLimit-Limit"], "5");
+    assert.equal(headers["X-RateLimit-Remaining"], "4");
+    // Reset should be a Unix timestamp (numeric string, not ISO)
+    assert.match(headers["X-RateLimit-Reset"], /^\d+$/, "X-RateLimit-Reset should be a Unix timestamp");
+    const reset = Number(headers["X-RateLimit-Reset"]);
+    assert.ok(reset > Date.now() / 1000, "Reset timestamp should be in the future");
+  });
+
+  await t.test("sets X-RateLimit headers on 429 responses", () => {
+    const middleware = createRateLimitMiddleware({
+      windowMs: 1000,
+      maxRequests: 1,
+    });
+
+    const mockReq = {
+      headers: {},
+      socket: { remoteAddress: "10.0.0.2" },
+      get: () => undefined,
+    } as unknown as Request;
+
+    const headers: Record<string, string> = {};
+    const mockRes = {
+      set: (h: Record<string, string>) => { Object.assign(headers, h); return mockRes; },
+      status: () => mockRes,
+      json: () => mockRes,
+    } as unknown as Response;
+
+    middleware(mockReq, mockRes, () => {});
+    middleware(mockReq, mockRes, () => {}); // triggers 429
+
+    assert.equal(headers["X-RateLimit-Limit"], "1");
+    assert.equal(headers["X-RateLimit-Remaining"], "0");
+    assert.match(headers["X-RateLimit-Reset"], /^\d+$/, "X-RateLimit-Reset should be a Unix timestamp on 429");
+    assert.ok(headers["Retry-After"], "Retry-After should be set on 429");
+  });
+
   await t.test("identifies clients by IP address", () => {
     const middleware = createRateLimitMiddleware({
       windowMs: 1000,
