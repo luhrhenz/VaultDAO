@@ -328,19 +328,30 @@ test("getStats — latest activity determines status bucket (Req 2.3)", () => {
 // getActivityBuckets suite
 // ---------------------------------------------------------------------------
 
+const MIN_INTERVAL = 60_000; // 1 minute — minimum valid intervalMs
+
 test("getActivityBuckets — no records returns [] (Req 3.3)", () => {
   const agg = new ProposalActivityAggregator();
   assert.deepEqual(
-    agg.getActivityBuckets(1000),
+    agg.getActivityBuckets(MIN_INTERVAL),
     [],
     "should return empty array when no records",
+  );
+});
+
+test("getActivityBuckets — intervalMs below 60000 throws RangeError", () => {
+  const agg = new ProposalActivityAggregator();
+  assert.throws(
+    () => agg.getActivityBuckets(59_999),
+    RangeError,
+    "should throw RangeError for intervalMs < 60000",
   );
 });
 
 test("getActivityBuckets — two records within same interval land in one bucket (Req 2.4)", () => {
   const agg = new ProposalActivityAggregator();
 
-  // epoch 0ms and 500ms both fall in the [0, 1000) bucket
+  // Both timestamps fall in the same 1-minute bucket starting at epoch 0
   agg.addRecord(
     buildRecord({
       proposalId: "b1",
@@ -352,11 +363,11 @@ test("getActivityBuckets — two records within same interval land in one bucket
     buildRecord({
       proposalId: "b2",
       type: ProposalActivityType.CREATED,
-      timestamp: new Date(500).toISOString(),
+      timestamp: new Date(30_000).toISOString(), // 30s later, same bucket
     }),
   );
 
-  const buckets = agg.getActivityBuckets(1000);
+  const buckets = agg.getActivityBuckets(MIN_INTERVAL);
 
   assert.equal(buckets.length, 1, "should produce exactly one bucket");
   assert.equal(buckets[0].count, 2, "bucket count should be 2");
@@ -370,7 +381,7 @@ test("getActivityBuckets — two records within same interval land in one bucket
 test("getActivityBuckets — records in different intervals create separate buckets (Req 2.4)", () => {
   const agg = new ProposalActivityAggregator();
 
-  // epoch 0ms → bucket 0; epoch 1500ms → bucket 1000
+  // epoch 0ms → bucket 0; epoch 90_000ms → bucket 60_000
   agg.addRecord(
     buildRecord({
       proposalId: "b1",
@@ -382,11 +393,11 @@ test("getActivityBuckets — records in different intervals create separate buck
     buildRecord({
       proposalId: "b2",
       type: ProposalActivityType.EXECUTED,
-      timestamp: new Date(1500).toISOString(),
+      timestamp: new Date(90_000).toISOString(),
     }),
   );
 
-  const buckets = agg.getActivityBuckets(1000);
+  const buckets = agg.getActivityBuckets(MIN_INTERVAL);
 
   assert.equal(buckets.length, 2, "should produce two separate buckets");
   assert.equal(
@@ -397,8 +408,8 @@ test("getActivityBuckets — records in different intervals create separate buck
   assert.equal(buckets[0].count, 1, "first bucket count should be 1");
   assert.equal(
     buckets[1].timestamp,
-    new Date(1000).toISOString(),
-    "second bucket at t=1000",
+    new Date(60_000).toISOString(),
+    "second bucket at t=60000",
   );
   assert.equal(buckets[1].count, 1, "second bucket count should be 1");
 });
@@ -406,6 +417,7 @@ test("getActivityBuckets — records in different intervals create separate buck
 test("getActivityBuckets — types breakdown is accurate per bucket (Req 2.4)", () => {
   const agg = new ProposalActivityAggregator();
 
+  // All three timestamps fall within the same 1-minute bucket
   agg.addRecord(
     buildRecord({
       proposalId: "b1",
@@ -417,18 +429,18 @@ test("getActivityBuckets — types breakdown is accurate per bucket (Req 2.4)", 
     buildRecord({
       proposalId: "b2",
       type: ProposalActivityType.EXECUTED,
-      timestamp: new Date(200).toISOString(),
+      timestamp: new Date(10_000).toISOString(),
     }),
   );
   agg.addRecord(
     buildRecord({
       proposalId: "b3",
       type: ProposalActivityType.CREATED,
-      timestamp: new Date(400).toISOString(),
+      timestamp: new Date(20_000).toISOString(),
     }),
   );
 
-  const buckets = agg.getActivityBuckets(1000);
+  const buckets = agg.getActivityBuckets(MIN_INTERVAL);
 
   assert.equal(buckets.length, 1, "all three records should be in one bucket");
   assert.equal(buckets[0].count, 3, "bucket count should be 3");
@@ -447,26 +459,84 @@ test("getActivityBuckets — types breakdown is accurate per bucket (Req 2.4)", 
 test("getActivityBuckets — sum of all bucket counts equals total records added (Req 2.4)", () => {
   const agg = new ProposalActivityAggregator();
 
+  // p1 & p2 in bucket 0; p3 in bucket 60_000; p4 in bucket 180_000
   agg.addRecord(
     buildRecord({ proposalId: "p1", timestamp: new Date(0).toISOString() }),
   );
   agg.addRecord(
-    buildRecord({ proposalId: "p2", timestamp: new Date(500).toISOString() }),
+    buildRecord({
+      proposalId: "p2",
+      timestamp: new Date(30_000).toISOString(),
+    }),
   );
   agg.addRecord(
-    buildRecord({ proposalId: "p3", timestamp: new Date(1500).toISOString() }),
+    buildRecord({
+      proposalId: "p3",
+      timestamp: new Date(90_000).toISOString(),
+    }),
   );
   agg.addRecord(
-    buildRecord({ proposalId: "p4", timestamp: new Date(3000).toISOString() }),
+    buildRecord({
+      proposalId: "p4",
+      timestamp: new Date(180_000).toISOString(),
+    }),
   );
 
-  const buckets = agg.getActivityBuckets(1000);
+  const buckets = agg.getActivityBuckets(MIN_INTERVAL);
   const totalCount = buckets.reduce((sum, b) => sum + b.count, 0);
 
   assert.equal(
     totalCount,
     4,
     "sum of all bucket counts should equal total records added",
+  );
+});
+
+test("getActivityBuckets — maxBuckets caps the number of returned buckets", () => {
+  const agg = new ProposalActivityAggregator();
+
+  // 4 records in 4 distinct 1-minute buckets
+  for (let i = 0; i < 4; i++) {
+    agg.addRecord(
+      buildRecord({
+        proposalId: `p${i}`,
+        timestamp: new Date(i * MIN_INTERVAL).toISOString(),
+      }),
+    );
+  }
+
+  const buckets = agg.getActivityBuckets(MIN_INTERVAL, 2);
+
+  assert.equal(buckets.length, 2, "should return at most maxBuckets buckets");
+});
+
+test("getActivityBuckets — overflow buckets are merged into the last bucket", () => {
+  const agg = new ProposalActivityAggregator();
+
+  // 3 records in 3 distinct buckets; cap at 2 → last bucket absorbs the 3rd
+  for (let i = 0; i < 3; i++) {
+    agg.addRecord(
+      buildRecord({
+        proposalId: `p${i}`,
+        timestamp: new Date(i * MIN_INTERVAL).toISOString(),
+      }),
+    );
+  }
+
+  const buckets = agg.getActivityBuckets(MIN_INTERVAL, 2);
+
+  assert.equal(buckets.length, 2, "should return exactly 2 buckets");
+  // The last bucket should have absorbed the overflow record
+  const totalCount = buckets.reduce((sum, b) => sum + b.count, 0);
+  assert.equal(
+    totalCount,
+    3,
+    "total count across capped buckets should equal total records",
+  );
+  assert.equal(
+    buckets[1].count,
+    2,
+    "last bucket should contain 2 records after merge",
   );
 });
 
