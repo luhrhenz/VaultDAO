@@ -84,6 +84,11 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose
     return filtered;
   }, [notifications, filter, sort]);
 
+  // Reset page when filtered notifications change (e.g., new notifications arrive)
+  useEffect(() => {
+    setPage(1);
+  }, [filteredNotifications.length, setPage]);
+
   // Pagination
   const totalPages = Math.ceil(filteredNotifications.length / pageSize);
   const paginatedNotifications = useMemo(() => {
