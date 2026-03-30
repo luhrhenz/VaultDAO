@@ -4,6 +4,7 @@ import type {
   GetContractDataResult,
   GetEventsParams,
   GetEventsResult,
+  GetLatestLedgerResult,
   RpcRequest,
   RpcResponse,
   SorobanRpcClientConfig,
@@ -88,15 +89,29 @@ export class SorobanRpcClient {
     );
   }
 
+  /**
+   * Fetch latest ledger information from the Soroban RPC.
+   */
+  async getLatestLedger(): Promise<number> {
+    const result = await this.call<undefined, GetLatestLedgerResult>(
+      "getLatestLedger",
+      undefined,
+    );
+    return result.sequence;
+  }
+
   // ─── Internal ──────────────────────────────────────────────────────────────
 
-  private async call<P, R>(method: string, params: P): Promise<R> {
+  private async call<P, R>(method: string, params?: P): Promise<R> {
     const body: RpcRequest<P> = {
       jsonrpc: "2.0",
       id: ++this.requestId,
       method,
-      params,
     };
+
+    if (params !== undefined) {
+      (body as RpcRequest<P> & { params: P }).params = params;
+    }
 
     let lastError: unknown;
 

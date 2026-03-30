@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../../shared/logging/logger.js";
 import type { CursorStorage, EventCursor } from "./cursor.types.js";
@@ -53,10 +53,17 @@ export class FileCursorAdapter implements CursorStorage {
    * Saves the cursor to disk.
    */
   public async saveCursor(cursor: EventCursor): Promise<void> {
+    const tempPath = `${this.filePath}.tmp-${process.pid}-${Date.now()}`;
     try {
       const content = JSON.stringify(cursor, null, 2);
-      writeFileSync(this.filePath, content, "utf8");
+      writeFileSync(tempPath, content, "utf8");
+      renameSync(tempPath, this.filePath);
     } catch (error) {
+      try {
+        rmSync(tempPath, { force: true });
+      } catch {
+        // best-effort cleanup
+      }
       this.logger.error("failed to persist cursor", {
         path: this.filePath,
         error: error instanceof Error ? error.message : String(error),
