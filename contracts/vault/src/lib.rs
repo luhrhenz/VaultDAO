@@ -576,6 +576,17 @@ impl VaultDAO {
 
         // Update reputation for creating proposal
         Self::update_reputation_on_propose(&env, &proposer);
+        storage::metrics_on_proposal(&env);
+
+        // Emit metrics update event
+        let metrics = storage::get_metrics(&env);
+        events::emit_metrics_updated(
+            &env,
+            metrics.executed_count,
+            metrics.rejected_count,
+            metrics.expired_count,
+            metrics.success_rate_bps(),
+        );
 
         Ok(proposal_id)
     }
@@ -1294,6 +1305,31 @@ impl VaultDAO {
             }
         }
 
+        // Enforce max delegation depth (prevent chains longer than 10)
+        const MAX_DELEGATION_DEPTH: u32 = 10;
+        let mut depth = 0u32;
+        let mut current = delegate.clone();
+        let current_ledger = env.ledger().sequence() as u64;
+
+        loop {
+            if depth >= MAX_DELEGATION_DEPTH {
+                return Err(VaultError::Unauthorized); // Chain would be too long
+            }
+
+            if let Some(delegation) = storage::get_delegation(&env, &current) {
+                // Check if delegation is still active
+                if !delegation.is_active
+                    || (delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger)
+                {
+                    break;
+                }
+                current = delegation.delegate;
+                depth += 1;
+            } else {
+                break;
+            }
+        }
+
         let old_delegate = storage::get_delegation(&env, &delegator)
             .map(|d| d.delegate)
             .unwrap_or(delegator.clone());
@@ -1365,6 +1401,51 @@ impl VaultDAO {
             Err(VaultError::ProposalNotFound) // No delegation to revoke
         }
     }
+
+    /// Get the delegation chain for an address.
+    ///
+    /// Returns a vector of addresses representing the delegation chain from the given address
+    /// to the final delegate. For example, if A delegates to B and B delegates to C, calling
+    /// this with A returns [B, C].
+    ///
+    /// # Arguments
+    /// * `addr` - The address to trace the delegation chain for
+    ///
+    /// # Returns
+    /// A vector of addresses in the delegation chain (empty if no delegation)
+    ///
+    /// # Errors
+    /// Returns `VaultError::Unauthorized` if the delegation chain exceeds max depth (10)
+    pub fn get_delegation_chain(env: Env, addr: Address) -> Result<Vec<Address>, VaultError> {
+        const MAX_DELEGATION_DEPTH: u32 = 10;
+        let mut chain = Vec::new(&env);
+        let mut current = addr.clone();
+        let mut depth = 0u32;
+        let current_ledger = env.ledger().sequence() as u64;
+
+        loop {
+            if depth >= MAX_DELEGATION_DEPTH {
+                return Err(VaultError::Unauthorized); // Chain too long
+            }
+
+            if let Some(delegation) = storage::get_delegation(&env, &current) {
+                // Check if delegation is still active
+                if !delegation.is_active
+                    || (delegation.expiry_ledger > 0 && current_ledger > delegation.expiry_ledger)
+                {
+                    break;
+                }
+                chain.push_back(delegation.delegate.clone());
+                current = delegation.delegate;
+                depth += 1;
+            } else {
+                break;
+            }
+        }
+
+        Ok(chain)
+    }
+
     /// Veto a proposal. Can be called only by configured veto addresses.
     ///
     /// A veto moves a proposal to `Vetoed` and removes it from the priority queue.
@@ -4195,6 +4276,16 @@ impl VaultDAO {
         );
         Self::update_reputation_on_propose(&env, &proposer);
         storage::metrics_on_proposal(&env);
+
+        // Emit metrics update event
+        let metrics = storage::get_metrics(&env);
+        events::emit_metrics_updated(
+            &env,
+            metrics.executed_count,
+            metrics.rejected_count,
+            metrics.expired_count,
+            metrics.success_rate_bps(),
+        );
 
         Ok(proposal_id)
     }
