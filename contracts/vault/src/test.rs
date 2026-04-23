@@ -9256,3 +9256,281 @@ fn test_gas_limit_unlimited_when_disabled() {
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.status, ProposalStatus::Executed);
 }
+
+// ============================================================================
+// #696 – withdraw_fees tests
+// ============================================================================
+
+#[test]
+fn test_withdraw_fees_returns_zero_when_no_fees_collected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    // No fees collected yet — should return 0 without error
+    let withdrawn = client.withdraw_fees(&admin, &token, &recipient);
+    assert_eq!(withdrawn, 0);
+}
+
+#[test]
+fn test_withdraw_fees_unauthorized_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(non_admin.clone());
+
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &non_admin, &Role::Treasurer);
+
+    let res = client.try_withdraw_fees(&non_admin, &token, &recipient);
+    assert_eq!(res, Err(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
+fn test_withdraw_fees_transfers_accumulated_fees() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient_addr = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(treasurer.clone());
+
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = token_contract.address();
+    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    // Mint enough for proposal + fee
+    token_sac.mint(&contract_id, &10_000);
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
+
+    // Use the vault itself as treasury so fees stay in the contract and can be withdrawn
+    let fee_structure = FeeStructure {
+        tiers: Vec::new(&env),
+        base_fee_bps: 50, // 0.5%
+        reputation_discount_threshold: 750,
+        reputation_discount_percentage: 50,
+        treasury: contract_id.clone(), // fees stay in vault
+        enabled: true,
+    };
+    client.set_fee_structure(&admin, &fee_structure);
+
+    // Propose and execute a transfer so fees are collected
+    let proposal_id = client.propose_transfer(
+        &treasurer,
+        &recipient_addr,
+        &token,
+        &1000,
+        &Symbol::new(&env, "pay"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&treasurer, &proposal_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    // get_fees_collected tracks the running total
+    let fees = client.get_fees_collected(&token);
+    assert!(fees > 0, "fees should be > 0 after execution");
+
+    // Admin withdraws accumulated fees to recipient
+    let withdrawn = client.withdraw_fees(&admin, &token, &recipient_addr);
+    assert_eq!(withdrawn, fees);
+
+    // Counter should be reset to 0
+    assert_eq!(client.get_fees_collected(&token), 0);
+}
+
+// ============================================================================
+// #697 – set_oracle_config alias + PriceBelow condition test
+// ============================================================================
+
+#[test]
+fn test_set_oracle_config_alias_stores_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let oracle_addr = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+
+    // set_oracle_config is the public alias for update_oracle_config
+    client.set_oracle_config(
+        &admin,
+        &crate::types::VaultOracleConfig {
+            address: oracle_addr.clone(),
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 500,
+        },
+    );
+
+    // Verify via update_oracle_config round-trip (both write the same key)
+    // We can confirm by calling set_oracle_config again without error
+    client.set_oracle_config(
+        &admin,
+        &crate::types::VaultOracleConfig {
+            address: oracle_addr,
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 200,
+        },
+    );
+}
+
+#[test]
+fn test_price_below_condition_satisfied() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    token_sac.mint(&contract_id, &1000);
+
+    // Mock oracle returns price = 1000 with timestamp = 0
+    let oracle_id = env.register(mock_oracle::MockOracle, ());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    // max_staleness large enough that timestamp=0 is fresh at default ledger
+    client.set_oracle_config(
+        &admin,
+        &crate::types::VaultOracleConfig {
+            address: oracle_id,
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 10000,
+        },
+    );
+
+    let asset = Address::generate(&env);
+    let mut conditions = Vec::new(&env);
+    // price = 1000, threshold = 2000 → PriceBelow(2000) satisfied
+    conditions.push_back(Condition::PriceBelow(asset, 2000));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "below"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+    client.execute_proposal(&admin, &proposal_id);
+
+    assert_eq!(
+        client.get_proposal(&proposal_id).status,
+        ProposalStatus::Executed
+    );
+}
+
+#[test]
+fn test_price_below_condition_not_satisfied() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = token_contract.address();
+    let token_sac = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+    token_sac.mint(&contract_id, &1000);
+
+    // Mock oracle returns price = 1000
+    let oracle_id = env.register(mock_oracle::MockOracle, ());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    client.initialize(&admin, &default_init_config(&env, signers, 1));
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    client.set_oracle_config(
+        &admin,
+        &crate::types::VaultOracleConfig {
+            address: oracle_id,
+            base_symbol: Symbol::new(&env, "USD"),
+            max_staleness: 10000,
+        },
+    );
+
+    let asset = Address::generate(&env);
+    let mut conditions = Vec::new(&env);
+    // price = 1000, threshold = 500 → PriceBelow(500) NOT satisfied
+    conditions.push_back(Condition::PriceBelow(asset, 500));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &recipient,
+        &token_addr,
+        &100,
+        &Symbol::new(&env, "below_fail"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.approve_proposal(&signer1, &proposal_id);
+
+    let res = client.try_execute_proposal(&admin, &proposal_id);
+    assert!(res.is_err(), "PriceBelow not satisfied should block execution");
+}

@@ -3724,6 +3724,41 @@ impl VaultDAO {
         storage::get_user_volume(&env, &user, &token)
     }
 
+    /// Withdraw accumulated protocol fees for a specific token to a recipient.
+    ///
+    /// Only Admin can call this. Transfers the full accumulated fee balance for
+    /// `token` from the vault to `recipient` and resets the counter to zero.
+    ///
+    /// # Arguments
+    /// * `admin`     - Admin address (must authorize)
+    /// * `token`     - Token contract address whose fees to withdraw
+    /// * `recipient` - Address that receives the fees
+    pub fn withdraw_fees(
+        env: Env,
+        admin: Address,
+        token: Address,
+        recipient: Address,
+    ) -> Result<i128, VaultError> {
+        admin.require_auth();
+        if storage::get_role(&env, &admin) != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let amount = storage::get_fees_collected(&env, &token);
+        if amount == 0 {
+            return Ok(0);
+        }
+
+        // Reset collected balance before transfer (checks-effects-interactions)
+        let key = crate::storage::FeatureKey::FeesCollected(token.clone());
+        env.storage().persistent().set(&key, &0i128);
+
+        token::transfer(&env, &token, &recipient, amount);
+
+        storage::extend_instance_ttl(&env);
+        Ok(amount)
+    }
+
     // ========================================================================
     // Reputation System (Issue: feature/reputation-system)
     // ========================================================================
@@ -4211,6 +4246,18 @@ impl VaultDAO {
         Ok(())
     }
 
+    /// Set oracle configuration (alias for `update_oracle_config`).
+    ///
+    /// Stores the oracle address and staleness threshold used by
+    /// `PriceAbove` / `PriceBelow` condition evaluation.
+    pub fn set_oracle_config(
+        env: Env,
+        admin: Address,
+        oracle_config: crate::VaultOracleConfig,
+    ) -> Result<(), VaultError> {
+        Self::update_oracle_config(env, admin, oracle_config)
+    }
+
     /// Get the current price of an asset in USD from the configured oracle.
     pub fn get_asset_price(env: &Env, asset: Address) -> Result<i128, VaultError> {
         let oracle_cfg = match storage::get_oracle_config(env) {
@@ -4223,11 +4270,13 @@ impl VaultDAO {
         let price_data: Option<VaultPriceData> = env.invoke_contract(
             &oracle_cfg.address,
             &Symbol::new(env, "lastprice"),
-            Vec::from_array(env, [asset.into_val(env)]),
+            Vec::from_array(env, [asset.clone().into_val(env)]),
         );
 
         match price_data {
             Some(data) => {
+                // Compare ledger sequences: max_staleness is in ledgers, data.timestamp is the
+                // ledger sequence at which the price was recorded.
                 let current_ledger = env.ledger().sequence() as u64;
                 if current_ledger.saturating_sub(data.timestamp) > oracle_cfg.max_staleness as u64 {
                     events::emit_oracle_price_stale(env, &asset, data.timestamp, current_ledger);
