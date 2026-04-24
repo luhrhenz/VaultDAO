@@ -1,7 +1,7 @@
 use super::*;
 use crate::types::{
-    DexConfig, FeeStructure, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails,
-    VelocityConfig,
+    DexConfig, FeeStructure, Reputation, RetryConfig, SwapProposal, TimeBasedThreshold,
+    TransferDetails, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -47,6 +47,77 @@ fn default_init_config(
         pre_execution_hooks: soroban_sdk::Vec::new(_env),
         post_execution_hooks: soroban_sdk::Vec::new(_env),
     }
+}
+
+#[allow(dead_code)]
+fn setup_spending_limits_env(
+    env: &Env,
+    spending_limit: i128,
+    daily_limit: i128,
+    weekly_limit: i128,
+    velocity_limit: VelocityConfig,
+) -> (
+    VaultDAOClient<'_>,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(env, &contract_id);
+
+    let admin = Address::generate(env);
+    let proposer = Address::generate(env);
+    let recipient = Address::generate(env);
+    let token = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let mut signers = Vec::new(env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        quorum_percentage: 0,
+        spending_limit,
+        daily_limit,
+        weekly_limit,
+        timelock_threshold: weekly_limit + 1,
+        timelock_delay: 0,
+        velocity_limit,
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        veto_addresses: Vec::new(env),
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+        recovery_config: crate::types::RecoveryConfig::default(env),
+        staking_config: types::StakingConfig::default(),
+        pre_execution_hooks: soroban_sdk::Vec::new(env),
+        post_execution_hooks: soroban_sdk::Vec::new(env),
+    };
+
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &proposer, &Role::Treasurer);
+
+    (client, admin, proposer, recipient, token)
+}
+
+#[allow(dead_code)]
+fn set_exact_reputation(env: &Env, addr: &Address, score: u32) {
+    storage::set_reputation(
+        env,
+        addr,
+        &Reputation {
+            score,
+            last_decay_ledger: env.ledger().sequence() as u64,
+            ..Reputation::default()
+        },
+    );
 }
 
 #[test]
@@ -1315,6 +1386,305 @@ fn test_velocity_limit_enforcement() {
         &0i128,
     );
     assert_eq!(res.err(), Some(Ok(VaultError::VelocityLimitExceeded)));
+}
+
+#[test]
+fn test_propose_transfer_exact_spending_limit_passes_and_limit_plus_one_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        10_000,
+        20_000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1000,
+        &Symbol::new(&env, "exact"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(proposal_id > 0);
+
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1001,
+        &Symbol::new(&env, "over"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+}
+
+#[test]
+fn test_propose_transfer_daily_limit_accumulates_across_multiple_proposals() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        600,
+        1000,
+        10_000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+    );
+
+    client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &400,
+        &Symbol::new(&env, "d1"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &600,
+        &Symbol::new(&env, "d2"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1,
+        &Symbol::new(&env, "d3"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsDailyLimit)));
+}
+
+#[test]
+fn test_propose_transfer_weekly_limit_accumulates_across_multiple_proposals() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        300,
+        2_000,
+        900,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+    );
+
+    client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &300,
+        &Symbol::new(&env, "w1"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &300,
+        &Symbol::new(&env, "w2"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &300,
+        &Symbol::new(&env, "w3"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let res = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1,
+        &Symbol::new(&env, "w4"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(res.err(), Some(Ok(VaultError::ExceedsWeeklyLimit)));
+}
+
+#[test]
+fn test_propose_transfer_reputation_boost_thresholds_at_799_800_and_900() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        10_000,
+        20_000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+    );
+
+    set_exact_reputation(&env, &proposer, 799);
+    let at_799 = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &1001,
+        &Symbol::new(&env, "r799"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(at_799.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+
+    set_exact_reputation(&env, &proposer, 800);
+    let at_800_fail = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &2001,
+        &Symbol::new(&env, "r800f"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(at_800_fail.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+
+    set_exact_reputation(&env, &proposer, 800);
+    let at_800_pass = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &2000,
+        &Symbol::new(&env, "r800p"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(at_800_pass > 0);
+
+    set_exact_reputation(&env, &proposer, 900);
+    let at_900_fail = client.try_propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &3001,
+        &Symbol::new(&env, "r900f"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert_eq!(at_900_fail.err(), Some(Ok(VaultError::ExceedsProposalLimit)));
+
+    set_exact_reputation(&env, &proposer, 900);
+    let at_900_pass = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &3000,
+        &Symbol::new(&env, "r900p"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(at_900_pass > 0);
+}
+
+#[test]
+fn test_cancel_proposal_refunds_daily_and_weekly_spending_limits() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, proposer, recipient, token) = setup_spending_limits_env(
+        &env,
+        1000,
+        1000,
+        1000,
+        VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+    );
+
+    let proposal_id = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &400,
+        &Symbol::new(&env, "refund"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let today = storage::get_day_number(&env);
+    let week = storage::get_week_number(&env);
+    assert_eq!(storage::get_daily_spent(&env, today), 400);
+    assert_eq!(storage::get_weekly_spent(&env, week), 400);
+
+    client.cancel_proposal(&proposer, &proposal_id, &Symbol::new(&env, "cancel"));
+
+    assert_eq!(storage::get_daily_spent(&env, today), 0);
+    assert_eq!(storage::get_weekly_spent(&env, week), 0);
+
+    let replacement = client.propose_transfer(
+        &proposer,
+        &recipient,
+        &token,
+        &900,
+        &Symbol::new(&env, "after"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+    assert!(replacement > 0);
 }
 
 #[test]
