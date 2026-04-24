@@ -112,6 +112,8 @@ mod test_subscriptions;
 mod test_voting_deadline;
 #[cfg(test)]
 mod test_streaming;
+#[cfg(test)]
+mod test_attachments;
 
 #[contractimpl]
 #[allow(clippy::too_many_arguments)]
@@ -3476,6 +3478,11 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    /// Get all IPFS attachment hashes for a proposal (public read).
+    pub fn get_attachments(env: Env, proposal_id: u64) -> Vec<String> {
+        storage::get_attachments(&env, proposal_id)
     }
 
     // ========================================================================
