@@ -6,7 +6,7 @@ import './index.css';
 import './i18n';
 import i18n from './i18n';
 import { ToastProvider } from './context/ToastContext';
-import { WalletProvider } from './context/WalletContext';
+import { WalletProviders } from './components/WalletProviders';
 import { NotificationProvider } from './context/NotificationContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { OnboardingProvider } from './context/OnboardingProvider';
@@ -39,7 +39,7 @@ function RootApp() {
       <I18nextProvider i18n={i18n}>
         <ThemeProvider>
           <ToastProvider>
-            <WalletProvider>
+            <WalletProviders>
               <NotificationProvider>
                 <OnboardingProvider>
                   <RealtimeProvider>
@@ -47,7 +47,7 @@ function RootApp() {
                   </RealtimeProvider>
                 </OnboardingProvider>
               </NotificationProvider>
-            </WalletProvider>
+            </WalletProviders>
           </ToastProvider>
         </ThemeProvider>
       </I18nextProvider>

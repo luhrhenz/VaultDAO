@@ -22,8 +22,6 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { useWallet } from "../../hooks/useWallet";
-import type { WalletAdapter } from "../../adapters";
-import { WalletSwitcher } from "../WalletSwitcher";
 import CopyButton from '../CopyButton';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { LayoutErrorBoundary } from '../ErrorHandler';
@@ -36,10 +34,12 @@ import { useOnboarding } from "../../context/OnboardingProvider";
 import { ONBOARDING_CONFIG } from "../../constants/onboarding";
 import VoiceCommands from "../VoiceCommands";
 import VoiceNavigation from "../VoiceNavigation";
+import { useWalletProviderInfo } from "../WalletProviders";
 
 const DashboardLayout: React.FC = () => {
   const { t } = useTranslation();
-  const { isConnected, address, network, connect, disconnect, availableWallets, selectedWalletId, switchWallet } = useWallet();
+  const { isConnected, address, network, connect, disconnect, walletType } = useWallet();
+  const { providers } = useWalletProviderInfo();
   const { unreadCount } = useNotifications();
   const onboarding = useOnboarding();
   const location = useLocation();
@@ -49,6 +49,7 @@ const DashboardLayout: React.FC = () => {
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
+  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
   // Auto-show onboarding prompt for new users
   useEffect(() => {
@@ -202,19 +203,12 @@ const DashboardLayout: React.FC = () => {
                 )}
               </div>
             ) : (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <WalletSwitcher
-                  availableWallets={availableWallets}
-                  selectedWalletId={selectedWalletId}
-                  onSelect={(adapter: WalletAdapter) => switchWallet(adapter)}
-                />
-                <button
-                  onClick={connect}
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-5 py-2.5 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95 flex items-center min-h-[44px] shadow-lg shadow-purple-500/20"
-                >
-                  <Wallet size={18} className="mr-2" /> Connect
-                </button>
-              </div>
+              <button
+                onClick={() => setIsWalletModalOpen(true)}
+                className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-5 py-2.5 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95 flex items-center min-h-[44px] shadow-lg shadow-purple-500/20"
+              >
+                <Wallet size={18} className="mr-2" /> Connect Wallet
+              </button>
             )}
           </div>
         </header>
@@ -241,6 +235,46 @@ const DashboardLayout: React.FC = () => {
       {/* Voice Support */}
       <VoiceNavigation />
       <VoiceCommands />
+
+      {isWalletModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Select Wallet</h2>
+              <button
+                onClick={() => setIsWalletModalOpen(false)}
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 dark:text-gray-400 dark:hover:bg-gray-700"
+                aria-label="Close wallet selection"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {providers.map((provider) => (
+                <button
+                  key={provider.id}
+                  onClick={async () => {
+                    await connect(provider.id);
+                    setIsWalletModalOpen(false);
+                  }}
+                  className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                    provider.available
+                      ? 'border-slate-300 hover:bg-slate-100 dark:border-gray-600 dark:hover:bg-gray-700'
+                      : 'border-slate-200 text-slate-500 dark:border-gray-700 dark:text-gray-400'
+                  } ${walletType === provider.id ? 'ring-2 ring-purple-500' : ''}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{provider.name}</span>
+                    <span className={`text-xs ${provider.available ? 'text-green-500' : 'text-yellow-500'}`}>
+                      {provider.available ? 'Detected' : 'Install required'}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Onboarding Prompt for New Users */}
       {showOnboardingPrompt && !onboarding.hasCompletedOnboarding && (
