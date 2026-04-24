@@ -856,7 +856,8 @@ return { totalBalance: balance, totalProposals, pendingApprovals, readyToExecute
     ): Promise<SimulationResult> => {
         if (!address) throw new Error("Wallet not connected");
 
-        const cacheKey = generateCacheKey({ functionName, args: args.map(a => a.toXDR('base64')), address });
+        const serializedArgs = args.map((arg) => arg.toXDR('base64'));
+        const cacheKey = generateCacheKey(functionName, [...serializedArgs, address]);
         const cached = getCachedSimulation(cacheKey);
         if (cached) return cached;
 
