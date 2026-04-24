@@ -1271,6 +1271,13 @@ impl VaultDAO {
                     metrics.success_rate_bps(),
                 );
 
+                storage::create_audit_entry(
+                    &env,
+                    AuditAction::ExecuteProposal,
+                    &executor,
+                    proposal_id,
+                );
+
                 Ok(())
             }
             Err(err) if Self::is_retryable_error(&err) => {
@@ -2260,6 +2267,7 @@ impl VaultDAO {
         config.signers.remove(found_idx.unwrap());
         storage::set_config(&env, &config);
         storage::extend_instance_ttl(&env);
+        storage::create_audit_entry(&env, AuditAction::RemoveSigner, &admin, 0);
 
         events::emit_config_updated(&env, &admin);
 
@@ -3057,6 +3065,36 @@ impl VaultDAO {
     // Audit Trail
     // ========================================================================
 
+    /// Get a page of audit entries in ascending ID order.
+    ///
+    /// `offset` is zero-based and `limit` is capped at 50 entries per call.
+    pub fn get_audit_trail(env: Env, offset: u64, limit: u32) -> Vec<AuditEntry> {
+        let capped_limit = core::cmp::min(limit, 50);
+        let mut entries = Vec::new(&env);
+        if capped_limit == 0 {
+            return entries;
+        }
+
+        let last_audit_id = storage::get_next_audit_id(&env).saturating_sub(1);
+        let start_id = offset.saturating_add(1);
+        if start_id == 0 || start_id > last_audit_id {
+            return entries;
+        }
+
+        let end_id = core::cmp::min(
+            last_audit_id,
+            start_id.saturating_add(capped_limit as u64).saturating_sub(1),
+        );
+
+        for entry_id in start_id..=end_id {
+            if let Ok(entry) = storage::get_audit_entry(&env, entry_id) {
+                entries.push_back(entry);
+            }
+        }
+
+        entries
+    }
+
     /// Get audit entry by ID
     pub fn get_audit_entry(env: Env, entry_id: u64) -> Result<AuditEntry, VaultError> {
         storage::get_audit_entry(&env, entry_id)
@@ -3064,21 +3102,39 @@ impl VaultDAO {
 
     /// Get the total number of audit entries
     pub fn get_audit_entry_count(env: Env) -> u64 {
-        storage::get_next_audit_id(&env)
+        storage::get_next_audit_id(&env).saturating_sub(1)
     }
 
-    /// Verify audit trail integrity
-    ///
-    /// Validates the hash chain from start_id to end_id.
-    /// Returns true if the chain is valid, false otherwise.
-    pub fn verify_audit_trail(env: Env, start_id: u64, end_id: u64) -> Result<bool, VaultError> {
-        if start_id > end_id {
-            return Err(VaultError::InvalidAmount);
+    /// Verify audit trail integrity across an inclusive range of entry IDs.
+    pub fn verify_audit_chain(env: Env, from_id: u64, to_id: u64) -> bool {
+        if from_id == 0 || from_id > to_id {
+            return false;
         }
-        for id in start_id..=end_id {
-            let entry = storage::get_audit_entry(&env, id)?;
 
-            // Verify hash computation
+        let last_audit_id = storage::get_next_audit_id(&env).saturating_sub(1);
+        if to_id > last_audit_id {
+            return false;
+        }
+
+        let mut expected_prev_hash = if from_id == 1 {
+            0
+        } else if let Ok(prev_entry) = storage::get_audit_entry(&env, from_id - 1) {
+            prev_entry.hash
+        } else {
+            return false;
+        };
+
+        for id in from_id..=to_id {
+            let entry = if let Ok(entry) = storage::get_audit_entry(&env, id) {
+                entry
+            } else {
+                return false;
+            };
+
+            if entry.prev_hash != expected_prev_hash {
+                return false;
+            }
+
             let computed_hash = storage::compute_audit_hash(
                 &env,
                 &entry.action,
@@ -3087,21 +3143,22 @@ impl VaultDAO {
                 entry.timestamp,
                 entry.prev_hash,
             );
-
             if computed_hash != entry.hash {
-                return Ok(false);
+                return false;
             }
 
-            // Verify chain linkage (except for first entry)
-            if id > 1 {
-                let prev_entry = storage::get_audit_entry(&env, id - 1)?;
-                if entry.prev_hash != prev_entry.hash {
-                    return Ok(false);
-                }
-            }
+            expected_prev_hash = entry.hash;
         }
 
-        Ok(true)
+        true
+    }
+
+    /// Verify audit trail integrity
+    ///
+    /// Validates the hash chain from start_id to end_id.
+    /// Returns true if the chain is valid, false otherwise.
+    pub fn verify_audit_trail(env: Env, start_id: u64, end_id: u64) -> Result<bool, VaultError> {
+        Ok(Self::verify_audit_chain(env, start_id, end_id))
     }
 
     /// Walk the full audit trail from entry 1 to the latest entry and verify
